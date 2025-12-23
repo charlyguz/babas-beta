@@ -808,7 +808,7 @@ class BabasController:
 
 def main():
     """Punto de entrada de la GUI"""
-    print("🚀 Iniciando BABAS GUI...")
+    print("[*] Iniciando BABAS GUI...")
     
     # Crear ventana
     app = BabasGUI()
