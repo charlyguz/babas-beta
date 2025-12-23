@@ -765,11 +765,11 @@ def run_plan_with_recovery(
                         continue
                 else:
                     print(f"\n❌ Máximo de reintentos alcanzado ({max_retries})")
-                    print("   No se pudo completar la tarea después de varios intentos.")
+                    print("   No pude completar esta tarea después de varios intentos.")
                     
                     # Mayordomo se disculpa
                     if butler:
-                        butler.say("Lo siento mucho, señor. No pude completar esta tarea a pesar de mis intentos. ¿Hay algo más en lo que pueda ayudarle?")
+                        butler.say("Lo siento mucho, señor. No pude completar esta tarea a pesar de mis intentos. Estoy listo para su siguiente orden.")
                     
                     return False
         else:
@@ -782,11 +782,6 @@ def run_plan_with_recovery(
                 butler.success()
             
             return True
-    
-    # Si salimos del while sin éxito
-    print("\n❌ No se pudo completar la tarea.")
-    if butler:
-        butler.say("Disculpe señor, no logré completar esta tarea. Estoy listo para su próximo comando.")
     
     return False
 
