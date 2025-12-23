@@ -168,10 +168,13 @@ class AudioRecorder:
             print(f"❌ Error grabando: {e}")
             return None
     
-    def record_push_to_talk(self, key: str = "space") -> Optional[np.ndarray]:
+    def record_push_to_talk(self, key: str = "space", already_pressed: bool = False) -> Optional[np.ndarray]:
         """
         Push-to-Talk: Mantén presionada la tecla para grabar.
         Suelta para terminar.
+        
+        Si already_pressed=True, asume que la tecla ya está presionada
+        y comienza a grabar inmediatamente.
         """
         if not SOUNDDEVICE_AVAILABLE:
             print("❌ sounddevice no disponible")
@@ -182,15 +185,14 @@ class AudioRecorder:
             return None
         
         self.audio_data = []
-        self.recording = False
         self._stop_event.clear()
         
-        print(f"   🎤 Mantén presionado [{key.upper()}] para hablar...")
+        if not already_pressed:
+            print(f"   🎤 Mantén presionado [{key.upper()}] para hablar...")
+            # Esperar a que presione la tecla
+            keyboard.wait(key)
+            print(f"   🔴 GRABANDO... (suelta [{key.upper()}] para terminar)")
         
-        # Esperar a que presione la tecla
-        keyboard.wait(key)
-        
-        print(f"   🔴 GRABANDO... (suelta [{key.upper()}] para terminar)")
         self.recording = True
         
         try:
@@ -205,7 +207,9 @@ class AudioRecorder:
                               blocksize=1024,
                               callback=callback):
                 # Esperar a que suelte la tecla
-                keyboard.wait(key, suppress=True, trigger_on_release=True)
+                while keyboard.is_pressed(key):
+                    import time as time_module
+                    time_module.sleep(0.01)
                 self.recording = False
         
         except sd.CallbackAbort:
@@ -541,21 +545,21 @@ class VoiceInputMode:
             print("   • Presiona [ENTER] de nuevo para enviar")
         print("   • Escribe 'texto' para cambiar a modo texto")
     
-    def get_input_with_mode(self) -> tuple[str, bool]:
+    def get_input_with_mode(self, butler=None) -> tuple[str, bool]:
         """
         Obtiene input según el modo activo.
+        En modo voz: ESPACIO para grabar, o escribe normalmente.
         Retorna: (texto, fue_voz)
         """
-        if self.active:
-            # Modo voz
-            if self.ptt_available:
-                print("\n🎤 Mantén [ESPACIO] para hablar (o escribe comando)")
-            else:
-                print("\n🎤 Presiona [ENTER] para hablar (o escribe comando)")
-            
+        if self.active and self.ptt_available:
+            # Modo voz con push-to-talk
+            return self._get_voice_or_text_input(butler)
+        
+        elif self.active:
+            # Modo voz sin push-to-talk (usa ENTER)
+            print("\n🎤 Presiona [ENTER] para hablar (o escribe comando)")
             text_input = input(">>> ").strip()
             
-            # Si escribió algo, usar eso
             if text_input:
                 if text_input.lower() == "texto":
                     self.active = False
@@ -563,7 +567,6 @@ class VoiceInputMode:
                     return "", False
                 return text_input, False
             
-            # Si solo ENTER, grabar voz
             voice_text = self.get_voice_command()
             if voice_text:
                 return voice_text, True
@@ -572,6 +575,63 @@ class VoiceInputMode:
         else:
             # Modo texto normal
             return input(">>> ").strip(), False
+    
+    def _get_voice_or_text_input(self, butler=None) -> tuple[str, bool]:
+        """
+        Input híbrido: ESPACIO para voz, cualquier otra tecla para texto.
+        """
+        print("\n🎤 [ESPACIO] = hablar | [T] = escribir | [Q] = salir")
+        print("   Esperando...", end="", flush=True)
+        
+        # Esperar una tecla
+        event = keyboard.read_event(suppress=True)
+        
+        while event.event_type != keyboard.KEY_DOWN:
+            event = keyboard.read_event(suppress=True)
+        
+        print("\r" + " " * 50 + "\r", end="")  # Limpiar línea
+        
+        key = event.name
+        
+        if key == "space":
+            # Modo grabación de voz
+            print("🔴 GRABANDO... (suelta ESPACIO para enviar)")
+            
+            # La tecla ya está presionada, grabar inmediatamente
+            audio = self.listener.recorder.record_push_to_talk("space", already_pressed=True)
+            
+            if audio is None:
+                print("   ⚠️ No se grabó audio")
+                return "", False
+            
+            print("   🔄 Transcribiendo...")
+            text = self.listener.transcriber.transcribe(audio)
+            
+            if text:
+                print(f"   📝 \"{text}\"")
+                return text, True
+            else:
+                print("   ❌ No se pudo transcribir")
+                return "", False
+        
+        elif key == "t":
+            # Cambiar a modo texto temporal
+            print("⌨️  Escribe tu comando:")
+            text = input(">>> ").strip()
+            return text, False
+        
+        elif key == "q":
+            return "salir", False
+        
+        elif key == "escape":
+            self.active = False
+            print("   ⌨️ Cambiado a modo texto permanente")
+            return "", False
+        
+        else:
+            # Cualquier otra tecla, intentar de nuevo
+            print(f"   💡 Tecla '{key}' no reconocida. Usa ESPACIO, T o Q.")
+            return "", False
 
 
 # =============================================================================
