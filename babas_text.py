@@ -1116,7 +1116,11 @@ def main():
     if VOICE_INPUT_AVAILABLE:
         voice_input = get_voice_input()
         if voice_input and voice_input.is_available():
-            print("🎤 Entrada por voz disponible (escribe 'mic' para activar)")
+            # Preguntar preferencia de modo al inicio
+            mode_choice = voice_input.ask_mode_preference(butler)
+            use_voice_mode = (mode_choice == "voice")
+            if use_voice_mode:
+                voice_input.show_voice_instructions()
     
     profile_path = None
     
@@ -1184,26 +1188,13 @@ def main():
                 try:
                     # Obtener input (texto o voz según modo)
                     if use_voice_mode and voice_input and voice_input.is_available():
-                        print("\n🎤 Modo VOZ activo (presiona ENTER y habla, o escribe 'texto' para cambiar)")
-                        text_input = input(">>> ").strip()
+                        voice_input.active = True
+                        user_input, was_voice = voice_input.get_input_with_mode()
+                        use_voice_mode = voice_input.active  # Por si cambió a texto
                         
-                        if text_input.lower() == "texto":
-                            use_voice_mode = False
-                            print("   ⌨️ Cambiado a modo texto")
-                            continue
-                        elif text_input:
-                            user_input = text_input
-                        else:
-                            # ENTER presionado, escuchar voz
-                            voice_text = voice_input.listener.listen_once("   🎤 Habla ahora...")
-                            if voice_text:
-                                user_input = voice_text
-                                # Mayordomo confirma que escuchó
-                                if butler and butler.enabled:
-                                    butler.say(f"Entendido. {voice_text[:30]}...")
-                            else:
-                                print("   ⚠️ No se detectó voz")
-                                continue
+                        if was_voice and user_input and butler and butler.enabled:
+                            # Mayordomo confirma que escuchó
+                            butler.say(f"Entendido, señor.")
                     else:
                         print("\n💬 ¿Qué quieres hacer? (o 'salir')")
                         user_input = input(">>> ").strip()

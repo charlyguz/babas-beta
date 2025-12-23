@@ -20,4 +20,5 @@ pygame>=2.5.0
 # Reconocimiento de voz (opcional - para comandos por voz)
 sounddevice>=0.4.0
 numpy>=1.24.0
+keyboard>=0.13.0  # Para push-to-talk (mantener ESPACIO)
 

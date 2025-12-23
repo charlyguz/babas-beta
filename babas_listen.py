@@ -1,6 +1,7 @@
 """
 🎤 BABAS Listen Module - Entrada por voz
-Usa OpenAI Whisper/gpt-4o-transcribe para reconocimiento de voz
+Usa OpenAI Whisper para reconocimiento de voz
+Push-to-Talk: Mantén ESPACIO para grabar
 """
 
 import os
@@ -8,6 +9,7 @@ import io
 import wave
 import tempfile
 import threading
+import sys
 from typing import Optional, Callable
 from dotenv import load_dotenv
 
@@ -20,13 +22,21 @@ try:
     SOUNDDEVICE_AVAILABLE = True
 except ImportError:
     SOUNDDEVICE_AVAILABLE = False
-    print("⚠️ sounddevice no instalado. Ejecuta: pip install sounddevice")
+    print("⚠️ sounddevice no instalado. Ejecuta: pip install sounddevice numpy")
 
 try:
     from openai import OpenAI
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
+
+# Para detectar teclas (push-to-talk)
+try:
+    import keyboard
+    KEYBOARD_AVAILABLE = True
+except ImportError:
+    KEYBOARD_AVAILABLE = False
+    # print("💡 Para push-to-talk: pip install keyboard")
 
 
 # =============================================================================
@@ -158,6 +168,123 @@ class AudioRecorder:
             print(f"❌ Error grabando: {e}")
             return None
     
+    def record_push_to_talk(self, key: str = "space") -> Optional[np.ndarray]:
+        """
+        Push-to-Talk: Mantén presionada la tecla para grabar.
+        Suelta para terminar.
+        """
+        if not SOUNDDEVICE_AVAILABLE:
+            print("❌ sounddevice no disponible")
+            return None
+        
+        if not KEYBOARD_AVAILABLE:
+            print("❌ keyboard no disponible. Ejecuta: pip install keyboard")
+            return None
+        
+        self.audio_data = []
+        self.recording = False
+        self._stop_event.clear()
+        
+        print(f"   🎤 Mantén presionado [{key.upper()}] para hablar...")
+        
+        # Esperar a que presione la tecla
+        keyboard.wait(key)
+        
+        print(f"   🔴 GRABANDO... (suelta [{key.upper()}] para terminar)")
+        self.recording = True
+        
+        try:
+            def callback(indata, frames, time, status):
+                if self._stop_event.is_set() or not self.recording:
+                    raise sd.CallbackAbort()
+                self.audio_data.append(indata.copy().flatten())
+            
+            with sd.InputStream(samplerate=self.sample_rate,
+                              channels=CHANNELS,
+                              dtype='float32',
+                              blocksize=1024,
+                              callback=callback):
+                # Esperar a que suelte la tecla
+                keyboard.wait(key, suppress=True, trigger_on_release=True)
+                self.recording = False
+        
+        except sd.CallbackAbort:
+            pass
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            return None
+        finally:
+            self.recording = False
+        
+        if not self.audio_data:
+            return None
+        
+        audio = np.concatenate(self.audio_data)
+        duration = len(audio) / self.sample_rate
+        
+        if duration < MIN_DURATION:
+            print(f"   ⚠️ Muy corto ({duration:.1f}s)")
+            return None
+        
+        print(f"   ✅ Grabado ({duration:.1f}s)")
+        return audio
+    
+    def record_with_enter(self) -> Optional[np.ndarray]:
+        """
+        Graba mientras ENTER no se presione de nuevo.
+        Más simple que push-to-talk.
+        """
+        if not SOUNDDEVICE_AVAILABLE:
+            return None
+        
+        self.audio_data = []
+        self.recording = True
+        self._stop_event.clear()
+        
+        print("   🔴 GRABANDO... (presiona ENTER para terminar)")
+        
+        # Thread para esperar ENTER
+        def wait_for_enter():
+            input()
+            self._stop_event.set()
+        
+        enter_thread = threading.Thread(target=wait_for_enter, daemon=True)
+        enter_thread.start()
+        
+        try:
+            def callback(indata, frames, time, status):
+                if self._stop_event.is_set():
+                    raise sd.CallbackAbort()
+                self.audio_data.append(indata.copy().flatten())
+            
+            with sd.InputStream(samplerate=self.sample_rate,
+                              channels=CHANNELS,
+                              dtype='float32',
+                              blocksize=1024,
+                              callback=callback):
+                self._stop_event.wait(timeout=MAX_DURATION)
+        
+        except sd.CallbackAbort:
+            pass
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            return None
+        finally:
+            self.recording = False
+        
+        if not self.audio_data:
+            return None
+        
+        audio = np.concatenate(self.audio_data)
+        duration = len(audio) / self.sample_rate
+        
+        if duration < MIN_DURATION:
+            print(f"   ⚠️ Muy corto ({duration:.1f}s)")
+            return None
+        
+        print(f"   ✅ Grabado ({duration:.1f}s)")
+        return audio
+    
     def stop(self):
         """Detiene la grabación"""
         self._stop_event.set()
@@ -239,38 +366,53 @@ class VoiceTranscriber:
 class VoiceListener:
     """Escucha comandos por voz"""
     
+    # Modos de grabación
+    MODE_AUTO = "auto"          # Detección automática de silencio
+    MODE_PUSH_TO_TALK = "ptt"   # Mantener tecla presionada
+    MODE_ENTER = "enter"        # ENTER para empezar/parar
+    
     def __init__(self):
         self.recorder = AudioRecorder()
         self.transcriber = VoiceTranscriber()
         self.enabled = self.transcriber.is_available()
         self.listening = False
-        self._callback: Optional[Callable[[str], None]] = None
+        self.mode = self.MODE_ENTER  # Default más confiable
+        
+        # Verificar si push-to-talk está disponible
+        self.ptt_available = KEYBOARD_AVAILABLE
     
     def is_available(self) -> bool:
         return self.enabled
     
+    def set_mode(self, mode: str):
+        """Cambia el modo de grabación"""
+        if mode == self.MODE_PUSH_TO_TALK and not self.ptt_available:
+            print("   ⚠️ Push-to-talk no disponible (pip install keyboard)")
+            self.mode = self.MODE_ENTER
+        else:
+            self.mode = mode
+    
     def listen_once(self, prompt: str = "🎤 Escuchando...") -> Optional[str]:
         """
-        Escucha un comando de voz.
-        Retorna el texto transcrito o None.
+        Escucha un comando de voz según el modo configurado.
         """
         if not self.enabled:
             print("❌ Reconocimiento de voz no disponible")
             return None
         
-        print(prompt)
-        
-        # Grabar audio
-        audio = self.recorder.record_until_silence(
-            on_sound=lambda: print("   🔊 Detectado...")
-        )
+        # Grabar según el modo
+        if self.mode == self.MODE_PUSH_TO_TALK and self.ptt_available:
+            audio = self.recorder.record_push_to_talk()
+        elif self.mode == self.MODE_ENTER:
+            audio = self.recorder.record_with_enter()
+        else:
+            print(prompt)
+            audio = self.recorder.record_until_silence(
+                on_sound=lambda: print("   🔊 Detectado...")
+            )
         
         if audio is None:
-            print("   ❌ No se detectó audio")
             return None
-        
-        duration = len(audio) / self.recorder.sample_rate
-        print(f"   ✅ Grabado ({duration:.1f}s)")
         
         # Transcribir
         print("   🔄 Transcribiendo...")
@@ -283,16 +425,37 @@ class VoiceListener:
             print("   ❌ No se pudo transcribir")
             return None
     
-    def listen_with_hotkey(self, 
-                          on_result: Callable[[str], None],
-                          hotkey: str = "space") -> None:
-        """
-        Modo de escucha continua con tecla de activación.
-        Presiona la tecla para empezar a hablar.
-        """
-        # Esto requeriría keyboard o pynput
-        # Por ahora usamos un enfoque más simple
-        pass
+    def listen_push_to_talk(self, key: str = "space") -> Optional[str]:
+        """Escucha con push-to-talk"""
+        if not self.enabled:
+            return None
+        
+        audio = self.recorder.record_push_to_talk(key)
+        if audio is None:
+            return None
+        
+        print("   🔄 Transcribiendo...")
+        text = self.transcriber.transcribe(audio)
+        
+        if text:
+            print(f"   📝 \"{text}\"")
+        return text
+    
+    def listen_with_enter(self) -> Optional[str]:
+        """Escucha hasta que presiones ENTER"""
+        if not self.enabled:
+            return None
+        
+        audio = self.recorder.record_with_enter()
+        if audio is None:
+            return None
+        
+        print("   🔄 Transcribiendo...")
+        text = self.transcriber.transcribe(audio)
+        
+        if text:
+            print(f"   📝 \"{text}\"")
+        return text
 
 
 # =============================================================================
@@ -306,48 +469,109 @@ class VoiceInputMode:
         self.listener = VoiceListener()
         self.enabled = self.listener.is_available()
         self.active = False
+        self.ptt_available = KEYBOARD_AVAILABLE
     
     def is_available(self) -> bool:
         return self.enabled
     
-    def get_voice_input(self) -> Optional[str]:
+    def get_voice_command(self) -> Optional[str]:
         """
-        Obtiene input por voz.
-        Retorna el comando o None si no se detectó.
+        Obtiene un comando por voz.
+        Usa el mejor método disponible.
         """
         if not self.enabled:
             return None
         
-        print("\n🎤 MODO VOZ - Presiona ENTER y habla (o escribe 'texto' para volver)")
-        input("   [Presiona ENTER para hablar]")
-        
-        return self.listener.listen_once("   🎤 Habla ahora...")
+        if self.ptt_available:
+            return self.listener.listen_push_to_talk()
+        else:
+            return self.listener.listen_with_enter()
     
-    def interactive_prompt(self) -> tuple[str, bool]:
+    def ask_mode_preference(self, butler=None) -> str:
         """
-        Prompt interactivo que permite voz o texto.
-        Retorna: (input_text, was_voice)
+        Pregunta al usuario qué modo prefiere (voz o texto).
+        Opcionalmente usa el mayordomo para hablar.
+        Retorna: "voice" o "text"
         """
-        print("\n💬 ¿Qué quieres hacer?")
-        print("   [Escribe comando o presiona ENTER para hablar]")
+        print("\n" + "="*50)
+        print("🎤 CONFIGURACIÓN DE ENTRADA")
+        print("="*50)
         
-        user_input = input(">>> ").strip()
+        # Si el mayordomo está disponible, que pregunte con voz
+        if butler and hasattr(butler, 'say'):
+            butler.say("Buenos días, señor. ¿Desea usar comandos por voz o por texto?")
         
-        # Si escribió algo, usar texto
-        if user_input:
-            return user_input, False
+        print("\n¿Cómo quieres dar comandos?\n")
+        print("  [1] ⌨️  Texto (escribir comandos)")
+        print("  [2] 🎤 Voz (hablar comandos)")
         
-        # Si solo presionó ENTER, usar voz
-        if self.enabled:
-            voice_text = self.listener.listen_once("🎤 Habla ahora...")
+        if self.ptt_available:
+            print("\n  💡 Modo voz: Mantén ESPACIO para hablar")
+        else:
+            print("\n  💡 Modo voz: Presiona ENTER, habla, ENTER para enviar")
+        
+        choice = input("\nOpción (1/2) [1]: ").strip() or "1"
+        
+        if choice == "2":
+            if not self.enabled:
+                print("\n⚠️ Voz no disponible. Usando texto.")
+                if butler:
+                    butler.say("Disculpe señor, el modo de voz no está disponible. Usaremos texto.")
+                return "text"
+            
+            self.active = True
+            print("\n✅ Modo VOZ activado")
+            if butler:
+                butler.say("Perfecto, señor. Modo de voz activado. Estoy escuchando.")
+            return "voice"
+        
+        print("\n✅ Modo TEXTO activado")
+        if butler:
+            butler.say("Entendido, señor. Modo texto. Escriba sus comandos.")
+        return "text"
+    
+    def show_voice_instructions(self):
+        """Muestra instrucciones del modo voz"""
+        print("\n📖 MODO VOZ:")
+        if self.ptt_available:
+            print("   • Mantén [ESPACIO] para hablar")
+            print("   • Suelta para enviar")
+        else:
+            print("   • Presiona [ENTER] para empezar a grabar")
+            print("   • Presiona [ENTER] de nuevo para enviar")
+        print("   • Escribe 'texto' para cambiar a modo texto")
+    
+    def get_input_with_mode(self) -> tuple[str, bool]:
+        """
+        Obtiene input según el modo activo.
+        Retorna: (texto, fue_voz)
+        """
+        if self.active:
+            # Modo voz
+            if self.ptt_available:
+                print("\n🎤 Mantén [ESPACIO] para hablar (o escribe comando)")
+            else:
+                print("\n🎤 Presiona [ENTER] para hablar (o escribe comando)")
+            
+            text_input = input(">>> ").strip()
+            
+            # Si escribió algo, usar eso
+            if text_input:
+                if text_input.lower() == "texto":
+                    self.active = False
+                    print("   ⌨️ Cambiado a modo texto")
+                    return "", False
+                return text_input, False
+            
+            # Si solo ENTER, grabar voz
+            voice_text = self.get_voice_command()
             if voice_text:
                 return voice_text, True
-            else:
-                print("   ⚠️ No se detectó voz. Intenta de nuevo.")
-                return "", False
-        else:
-            print("   ⚠️ Voz no disponible. Escribe tu comando.")
             return "", False
+        
+        else:
+            # Modo texto normal
+            return input(">>> ").strip(), False
 
 
 # =============================================================================
@@ -377,15 +601,23 @@ if __name__ == "__main__":
     if not voice.is_available():
         print("\n❌ Entrada por voz no disponible.")
         print("   Asegúrate de tener:")
-        print("   1. pip install sounddevice numpy")
+        print("   1. pip install sounddevice numpy keyboard")
         print("   2. OPENAI_API_KEY en tu .env")
         print("   3. Un micrófono conectado")
     else:
         print("\n✅ Sistema de voz listo!")
-        print("\nPresiona ENTER para hablar, o escribe 'salir' para terminar.\n")
+        
+        # Preguntar modo
+        mode = voice.ask_mode_preference()
+        
+        if mode == "voice":
+            voice.show_voice_instructions()
+            voice.active = True
+        
+        print("\nEscribe 'salir' para terminar.\n")
         
         while True:
-            text, was_voice = voice.interactive_prompt()
+            text, was_voice = voice.get_input_with_mode()
             
             if text.lower() in ["salir", "exit", "q"]:
                 print("\n👋 ¡Hasta luego!")
@@ -393,7 +625,7 @@ if __name__ == "__main__":
             
             if text:
                 source = "🎤 Voz" if was_voice else "⌨️ Texto"
-                print(f"\n{source}: {text}")
+                print(f"\n{source}: \"{text}\"")
             else:
                 print("\n   (sin entrada)")
 
