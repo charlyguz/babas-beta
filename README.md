@@ -1,262 +1,60 @@
-# 🤖 BABAS - Bot de Automatización Basado en Asistente con IA
+# BABAS - Browser Automation Bot Assistant System
 
-Asistente de automatización web inteligente que usa IA (GPT-4) para planificar y ejecutar tareas en el navegador.
+AI-powered web automation with voice control.
 
-![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
-![Playwright](https://img.shields.io/badge/Playwright-latest-green.svg)
-![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4-orange.svg)
+## Quick Start
 
-## ✨ Características
-
-- 🧠 **IA Inteligente**: Interpreta instrucciones en lenguaje natural
-- 🔄 **Auto-recuperación**: Si algo falla, la IA analiza y reintenta con otro enfoque
-- 📑 **Múltiples pestañas**: Trabaja en varias pestañas simultáneamente
-- 🔗 **Conecta a tu navegador**: Usa tus sesiones existentes de Gmail, WhatsApp, etc.
-- 💾 **Sesiones persistentes**: Guarda tus logins entre usos
-- 🎬 **Integraciones**: YouTube, Gmail, WhatsApp Web
-
-## 📋 Requisitos
-
-- Python 3.9+
-- Cuenta de OpenAI con API key
-
-## 🚀 Instalación
-
-1. **Clonar el repositorio**
-```bash
-git clone https://github.com/tu-usuario/babas.git
-cd babas
-```
-
-2. **Crear entorno virtual (recomendado)**
-```bash
-python -m venv venv
-# Windows
-venv\Scripts\activate
-# Linux/Mac
-source venv/bin/activate
-```
-
-3. **Instalar dependencias**
+1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. **Instalar navegadores de Playwright**
+2. Create `.env` file:
+```
+OPENAI_API_KEY=your_key_here
+ELEVENLABS_API_KEY=your_key_here  # Optional, for voice output
+```
+
+3. Run:
 ```bash
-playwright install chromium
+python babas.py
 ```
 
-5. **Configurar API Key de OpenAI**
-```bash
-# Crear archivo .env
-echo OPENAI_API_KEY=tu-api-key-aqui > .env
-```
+## Features
 
-## 💻 Uso
+- **Smart Navigation**: AI creates step-by-step plans for web tasks
+- **Auto-Recovery**: Automatically retries with new strategies if something fails
+- **Multi-Tab**: Work with multiple browser tabs
+- **Voice Commands**: Speak your commands (optional)
+- **Voice Butler**: Jarvis-style voice feedback (optional)
 
-```bash
-python babas_text.py
-```
+## Commands
 
-### Menú de Configuración
-
-Al iniciar, BABAS te preguntará cómo quieres trabajar:
-
-```
-¿Cómo quieres trabajar?
-
-  [1] 🔗 Usar MI NAVEGADOR (abre nuevo con tus sesiones)
-  [2] 💾 Sesión BABAS (perfil separado, guarda sesiones)
-  [3] 🆕 Sesión TEMPORAL (se borra al cerrar)
-```
-
-### Ejemplos de Comandos
-
-```
->>> abre youtube y busca lofi music
->>> ve a gmail y revisa mis correos
->>> en nueva pestaña abre twitter
->>> busca two sum en leetcode
->>> abre whatsapp y busca a María
-```
-
-### Comandos Especiales
-
-| Comando | Descripción |
+| Command | Description |
 |---------|-------------|
-| `salir` / `exit` / `q` | Cerrar BABAS |
-| `ayuda` / `help` | Mostrar ayuda |
-| `pestañas` / `tabs` | Ver pestañas abiertas |
-| `nueva` / `new` | Abrir nueva pestaña |
-| `captura` / `screenshot` | Tomar screenshot |
+| `exit` | Close BABAS |
+| `help` | Show help |
+| `tabs` | List open tabs |
+| `new` | Open new tab |
+| `screenshot` | Take screenshot |
+| `mute` | Mute voice butler |
 
-## 🔧 Opciones de Navegador
-
-### Opción 1: Usar tu navegador (con tus sesiones)
-
-BABAS puede conectarse a una instancia de Brave/Chrome con tus sesiones:
-
-**Si tu navegador está cerrado**: BABAS lo abrirá con tu perfil real.
-
-**Si tu navegador está abierto**: BABAS usará un perfil separado (pero guarda sesiones).
-
-### Opción 2: Siempre listo para BABAS
-
-Crea un acceso directo de tu navegador con este argumento:
-
-**Brave:**
-```
-"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe" --remote-debugging-port=9222
-```
-
-**Chrome:**
-```
-"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222
-```
-
-Cuando abras tu navegador desde ese acceso directo, BABAS lo detectará automáticamente.
-
-## 📁 Estructura del Proyecto
+## Examples
 
 ```
-babas/
-├── babas_text.py      # Código principal
-├── requirements.txt   # Dependencias
-├── .env              # API keys (no incluido en git)
-├── .gitignore        # Archivos ignorados
-├── README.md         # Este archivo
-└── babas-profile/    # Perfil de sesiones guardadas (ignorado en git)
+"open youtube and search lofi music"
+"go to gmail"
+"search two sum on leetcode"
+"in new tab open twitter"
 ```
 
-## 🛠️ Acciones Disponibles
+## Voice Mode
 
-### Básicas
-- `goto` - Navegar a URL
-- `click` - Click en elemento
-- `type_text` - Escribir texto
-- `press_key` - Presionar tecla
-- `wait` - Esperar
-- `scroll` - Hacer scroll
-- `screenshot` - Capturar pantalla
+Select Voice mode at startup to use the GUI control panel with:
+- Click-to-record voice commands
+- Plan confirmation buttons
+- Stop execution button
 
-### Inteligentes
-- `smart_search` - Busca automáticamente el campo de búsqueda
-- `smart_click` - Click por texto visible
+## License
 
-### Pestañas
-- `new_tab` - Nueva pestaña
-- `switch_tab` - Cambiar pestaña
-- `close_tab` - Cerrar pestaña
-
-### YouTube
-- `search_youtube` - Buscar en YouTube
-- `click_first_video` - Reproducir primer video
-
-### Gmail
-- `open_gmail` - Abrir Gmail
-- `compose_email` - Componer email
-- `send_email` - Enviar email
-
-### WhatsApp
-- `open_whatsapp` - Abrir WhatsApp Web
-- `search_contact` - Buscar contacto
-- `send_whatsapp_message` - Enviar mensaje
-
-## 🔄 Auto-recuperación
-
-Si un paso falla, BABAS:
-1. 📸 Toma screenshot del error
-2. 🔍 Analiza el contexto actual de la página
-3. 🤖 Pide a la IA un nuevo plan
-4. 🔄 Reintenta (hasta 3 veces)
-
-## 🎤 Comandos por Voz (Speech-to-Text)
-
-BABAS puede recibir comandos por voz usando OpenAI Whisper.
-
-### Configuración
-
-```bash
-pip install sounddevice numpy
-```
-
-### Cómo Usar
-
-1. Escribe `mic` o `hablar` para activar el modo voz
-2. Presiona ENTER cuando quieras hablar
-3. Habla tu comando
-4. BABAS transcribe y ejecuta
-
-```
-💬 ¿Qué quieres hacer?
->>> mic
-   🎤 Modo voz activado
-
-🎤 Modo VOZ activo
->>> [ENTER]
-   🎤 Habla ahora...
-   🔊 Detectado...
-   ✅ Grabado (2.3s)
-   🔄 Transcribiendo...
-   📝 "abre youtube y busca música lofi"
-
-🤖 Analizando...
-```
-
-### Comandos de Voz
-
-| Comando | Descripción |
-|---------|-------------|
-| `mic` / `hablar` | Activar modo voz |
-| `texto` | Volver a modo texto |
-| ENTER (en modo voz) | Empezar a grabar |
-
-## 🎙️ Mayordomo con Voz (Estilo Jarvis)
-
-BABAS incluye un mayordomo virtual que habla usando ElevenLabs.
-
-### Configuración
-
-1. Obtén una API key de [ElevenLabs](https://elevenlabs.io/)
-2. Agrega a tu `.env`:
-```
-ELEVENLABS_API_KEY=tu-api-key-aqui
-```
-3. Instala las dependencias de audio:
-```bash
-pip install elevenlabs pygame
-```
-
-### Comandos de Voz
-
-| Comando | Descripción |
-|---------|-------------|
-| `voz` / `voice` | Activar/silenciar mayordomo |
-| `calla` / `shut up` | Callar inmediatamente |
-
-### Frases del Mayordomo
-
-El mayordomo habla en momentos clave:
-- **Inicio**: "A sus órdenes, señor."
-- **Analizando**: "Procesando, señor. Un momento."
-- **Ejecutando**: "Ejecutando, señor."
-- **Éxito**: "Tarea completada exitosamente, señor."
-- **Error**: "Ha ocurrido un inconveniente, señor. Permítame intentar de nuevo."
-- **Despedida**: "Ha sido un placer servirle, señor."
-
-## ⚠️ Notas
-
-- Los screenshots de debug se guardan en una carpeta temporal que se borra al cerrar
-- El perfil `babas-profile/` guarda tus sesiones entre usos
-- Nunca compartas tu archivo `.env` con tu API key
-- La voz es opcional - BABAS funciona sin ElevenLabs
-
-## 📝 Licencia
-
-MIT License
-
-## 🤝 Contribuir
-
-¡Las contribuciones son bienvenidas! Por favor abre un issue o pull request.
-
+MIT
