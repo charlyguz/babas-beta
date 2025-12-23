@@ -17,3 +17,7 @@ python-dotenv>=1.0.0
 elevenlabs>=1.0.0
 pygame>=2.5.0
 
+# Reconocimiento de voz (opcional - para comandos por voz)
+sounddevice>=0.4.0
+numpy>=1.24.0
+

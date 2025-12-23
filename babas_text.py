@@ -15,15 +15,24 @@ load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 print("✅ Cliente OpenAI inicializado")
 
-# ---------- MAYORDOMO (VOZ) ----------
+# ---------- MAYORDOMO (VOZ OUTPUT) ----------
 try:
     from babas_voice import init_butler, shutdown_butler, get_butler
-    VOICE_AVAILABLE = True
+    VOICE_OUTPUT_AVAILABLE = True
 except ImportError:
-    VOICE_AVAILABLE = False
+    VOICE_OUTPUT_AVAILABLE = False
     def init_butler(): return None
     def shutdown_butler(): pass
     def get_butler(): return None
+
+# ---------- ESCUCHA (VOZ INPUT) ----------
+try:
+    from babas_listen import get_voice_input, VoiceInputMode
+    VOICE_INPUT_AVAILABLE = True
+except ImportError:
+    VOICE_INPUT_AVAILABLE = False
+    def get_voice_input(): return None
+    VoiceInputMode = None
 
 MODEL = "gpt-4o-mini"
 MAX_RETRIES = 3  # Intentos de auto-recuperación
@@ -1069,6 +1078,8 @@ def show_help():
     print("   captura, screenshot → Tomar screenshot")
     print("   voz, voice         → Activar/silenciar mayordomo")
     print("   calla, shut up     → Callar al mayordomo ahora")
+    print("   mic, hablar        → Activar entrada por voz")
+    print("   texto              → Volver a modo texto")
     print("\n💡 EJEMPLOS DE TAREAS:")
     print('   • "abre youtube y busca lofi music"')
     print('   • "ve a gmail"')
@@ -1092,12 +1103,20 @@ def main():
     print("\n💡 Escribe 'ayuda' para ver comandos")
     print("="*60)
     
-    # Inicializar mayordomo con voz
+    # Inicializar mayordomo con voz (output)
     butler = None
-    if VOICE_AVAILABLE:
+    if VOICE_OUTPUT_AVAILABLE:
         butler = init_butler()
         if butler and butler.enabled:
             print("\n🎙️ Mayordomo con voz activado")
+    
+    # Inicializar entrada por voz (input)
+    voice_input = None
+    use_voice_mode = False
+    if VOICE_INPUT_AVAILABLE:
+        voice_input = get_voice_input()
+        if voice_input and voice_input.is_available():
+            print("🎤 Entrada por voz disponible (escribe 'mic' para activar)")
     
     profile_path = None
     
@@ -1163,8 +1182,31 @@ def main():
             # === LOOP INTERACTIVO ===
             while True:
                 try:
-                    print("\n💬 ¿Qué quieres hacer? (o 'salir')")
-                    user_input = input(">>> ").strip()
+                    # Obtener input (texto o voz según modo)
+                    if use_voice_mode and voice_input and voice_input.is_available():
+                        print("\n🎤 Modo VOZ activo (presiona ENTER y habla, o escribe 'texto' para cambiar)")
+                        text_input = input(">>> ").strip()
+                        
+                        if text_input.lower() == "texto":
+                            use_voice_mode = False
+                            print("   ⌨️ Cambiado a modo texto")
+                            continue
+                        elif text_input:
+                            user_input = text_input
+                        else:
+                            # ENTER presionado, escuchar voz
+                            voice_text = voice_input.listener.listen_once("   🎤 Habla ahora...")
+                            if voice_text:
+                                user_input = voice_text
+                                # Mayordomo confirma que escuchó
+                                if butler and butler.enabled:
+                                    butler.say(f"Entendido. {voice_text[:30]}...")
+                            else:
+                                print("   ⚠️ No se detectó voz")
+                                continue
+                    else:
+                        print("\n💬 ¿Qué quieres hacer? (o 'salir')")
+                        user_input = input(">>> ").strip()
                     
                     if not user_input:
                         continue
@@ -1220,6 +1262,24 @@ def main():
                         if butler and butler.enabled:
                             butler.shut_up()
                             print("   🤫 Mayordomo silenciado")
+                        continue
+                    
+                    # Comandos de entrada por voz
+                    if cmd in ["mic", "hablar", "voz input", "escuchar", "listen"]:
+                        if voice_input and voice_input.is_available():
+                            use_voice_mode = True
+                            print("   🎤 Modo voz activado")
+                            print("   Presiona ENTER y habla para dar comandos")
+                            if butler and butler.enabled:
+                                butler.say("Modo de voz activado, señor. Estoy escuchando.")
+                        else:
+                            print("   ⚠️ Entrada por voz no disponible")
+                            print("   Instala: pip install sounddevice numpy")
+                        continue
+                    
+                    if cmd == "texto":
+                        use_voice_mode = False
+                        print("   ⌨️ Modo texto activado")
                         continue
                     
                     # Crear y ejecutar plan
