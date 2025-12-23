@@ -812,6 +812,189 @@ def save_debug_screenshot(page, name: str = "error") -> str:
     except:
         return ""
 
+
+# =============================================================================
+# 🎮 EASTER EGG: MODO HACKER
+# =============================================================================
+
+HACKER_CODE = '''
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+#define BUFFER_SIZE 4096
+#define ENCRYPTION_KEY 0x42
+
+struct payload_t {
+    unsigned char shellcode[256];
+    void (*execute)(void);
+    int privilege_level;
+};
+
+int bypass_firewall(const char* target) {
+    int sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
+    if (sockfd < 0) return -1;
+    
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(443);
+    inet_pton(AF_INET, target, &addr.sin_addr);
+    
+    // Establecer conexión encubierta
+    for (int i = 0; i < 3; i++) {
+        send_syn_packet(sockfd, &addr);
+        usleep(100000);
+    }
+    return 0;
+}
+
+void inject_payload(struct payload_t* payload) {
+    // Desencriptar shellcode
+    for (int i = 0; i < 256; i++) {
+        payload->shellcode[i] ^= ENCRYPTION_KEY;
+    }
+    
+    // Ejecutar en memoria
+    void* exec_mem = mmap(NULL, 256, 
+        PROT_READ | PROT_WRITE | PROT_EXEC,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    
+    memcpy(exec_mem, payload->shellcode, 256);
+    ((void(*)())exec_mem)();
+}
+
+int escalate_privileges() {
+    uid_t uid = getuid();
+    if (uid != 0) {
+        // Exploit CVE-2024-XXXX
+        char exploit[512];
+        sprintf(exploit, "/proc/%d/mem", getpid());
+        
+        int fd = open(exploit, O_RDWR);
+        if (fd >= 0) {
+            // Sobrescribir credenciales
+            struct cred* creds = prepare_creds();
+            creds->uid = 0;
+            creds->gid = 0;
+            commit_creds(creds);
+        }
+    }
+    return 0;
+}
+
+int main(int argc, char* argv[]) {
+    printf("[*] Initializing...");
+    
+    if (bypass_firewall(argv[1]) == 0) {
+        printf("[+] Firewall bypassed");
+        
+        struct payload_t payload;
+        load_payload(&payload, "backdoor.bin");
+        inject_payload(&payload);
+        
+        if (escalate_privileges() == 0) {
+            printf("[+] ROOT ACCESS GRANTED");
+            spawn_shell();
+        }
+    }
+    return 0;
+}
+'''
+
+HACKER_PHRASES = [
+    "Accediendo a mainframe...",
+    "Bypasseando firewall...",
+    "Inyectando payload...",
+    "Desencriptando credenciales...",
+    "Escalando privilegios...",
+    "Estableciendo backdoor...",
+    "Limpiando logs...",
+]
+
+HACKER_SUCCESS_PHRASES = [
+    "Estoy dentro.",
+    "Acceso concedido, señor.",
+    "El sistema es nuestro.",
+    "Hemos penetrado sus defensas, señor.",
+    "Root access obtained. Somos los dueños ahora.",
+    "Misión cumplida. El mainframe ha caído.",
+]
+
+async def run_hacker_mode(page, butler=None):
+    """
+    🎮 Easter Egg: Modo Hacker
+    Va a hackertyper.com y simula hackear algo épico.
+    """
+    import random
+    import asyncio
+    
+    print("\n" + "="*60)
+    print("🔓 INICIANDO PROTOCOLO DE INTRUSIÓN...")
+    print("="*60)
+    
+    if butler and butler.enabled:
+        butler.say("Iniciando protocolo de intrusión, señor. Accediendo al mainframe.")
+    
+    try:
+        # Ir a hackertyper
+        await asyncio.sleep(0.5)
+        page.goto("https://hackertyper.com/", wait_until="domcontentloaded")
+        await asyncio.sleep(1)
+        
+        # Hacer clic para cerrar el popup si existe
+        try:
+            page.keyboard.press("Escape")
+            await asyncio.sleep(0.3)
+        except:
+            pass
+        
+        # Simular escritura de código
+        print("\n💻 HACKEANDO...")
+        
+        # Escribir muchas teclas rápido
+        for i in range(random.randint(150, 250)):
+            # Teclear letras random
+            key = random.choice("asdfghjklqwertyuiopzxcvbnm1234567890")
+            page.keyboard.press(key)
+            
+            # Delay variable para efecto dramático
+            delay = random.uniform(0.01, 0.05)
+            await asyncio.sleep(delay)
+            
+            # Mostrar frases de progreso
+            if i == 30:
+                print(f"   🔥 {random.choice(HACKER_PHRASES)}")
+            elif i == 70:
+                print(f"   🔥 {random.choice(HACKER_PHRASES)}")
+            elif i == 120:
+                print(f"   🔥 {random.choice(HACKER_PHRASES)}")
+            elif i == 180:
+                print(f"   🔥 {random.choice(HACKER_PHRASES)}")
+        
+        # Efecto final
+        await asyncio.sleep(0.5)
+        
+        print("\n" + "="*60)
+        success_phrase = random.choice(HACKER_SUCCESS_PHRASES)
+        print(f"   ✅ {success_phrase}")
+        print("="*60 + "\n")
+        
+        if butler and butler.enabled:
+            butler.say(success_phrase)
+        
+        # Pequeña pausa para disfrutar el momento
+        await asyncio.sleep(2)
+        
+    except Exception as e:
+        print(f"   ❌ Error en modo hacker: {e}")
+        if butler and butler.enabled:
+            butler.say("Nos han detectado, señor. Abortando misión.")
+
+
 def check_port(port: int) -> bool:
     """Verifica si un puerto está abierto"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -1271,6 +1454,11 @@ def main():
                     if cmd == "texto":
                         use_voice_mode = False
                         print("   ⌨️ Modo texto activado")
+                        continue
+                    
+                    # 🎮 EASTER EGG: Modo Hacker
+                    if any(word in cmd for word in ["hackear", "hackea", "hack", "hacker"]):
+                        await run_hacker_mode(executor.current_page, butler)
                         continue
                     
                     # Crear y ejecutar plan

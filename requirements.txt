@@ -22,3 +22,7 @@ sounddevice>=0.4.0
 numpy>=1.24.0
 keyboard>=0.13.0  # Para push-to-talk (mantener ESPACIO)
 
+# Interfaz gráfica moderna
+customtkinter>=5.2.0
+pillow>=10.0.0  # Para iconos en la GUI
+
