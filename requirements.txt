@@ -1,0 +1,15 @@
+# BABAS - Dependencias
+# ====================
+
+# OpenAI API
+openai>=1.0.0
+
+# Playwright para automatización web
+playwright>=1.40.0
+
+# Validación de datos
+pydantic>=2.0.0
+
+# Variables de entorno
+python-dotenv>=1.0.0
+
