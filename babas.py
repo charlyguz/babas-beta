@@ -681,13 +681,15 @@ def run_plan_with_recovery(
     executor: ActionExecutor, 
     plan: Plan, 
     original_task: str,
-    max_retries: int = MAX_RETRIES
+    max_retries: int = MAX_RETRIES,
+    voice_gui = None
 ) -> bool:
     """Ejecuta el plan con auto-recuperación"""
     completed_steps = []
     current_plan = plan
     retry_count = 0
     butler = get_butler()
+    stopped_by_user = False
     
     while retry_count <= max_retries:
         print(f"\n🎬 Ejecutando {len(current_plan.steps)} pasos...\n")
@@ -697,6 +699,14 @@ def run_plan_with_recovery(
             butler.executing()
         
         for i, step in enumerate(current_plan.steps):
+            # Verificar si el usuario pidió detener
+            if voice_gui and voice_gui.is_stop_requested():
+                print(f"\n⛔ DETENIDO por el usuario")
+                if butler:
+                    butler.say("Entendido, señor. Deteniendo la ejecución.")
+                stopped_by_user = True
+                break
+            
             print(f"{'━'*50}")
             tab_info = f" [{executor.current_tab_name}]" if len(executor.tab_manager.tabs) > 1 else ""
             print(f"📍 [{i+1}/{len(current_plan.steps)}]{tab_info} {step.action}")
@@ -708,6 +718,14 @@ def run_plan_with_recovery(
             try:
                 executor.execute(step)
                 completed_steps.append(step)
+                
+                # Verificar detención después de cada paso
+                if voice_gui and voice_gui.is_stop_requested():
+                    print(f"\n⛔ DETENIDO por el usuario")
+                    if butler:
+                        butler.say("Entendido, señor. Deteniendo la ejecución.")
+                    stopped_by_user = True
+                    break
                 
                 # Mayordomo comenta progreso solo en checkpoints importantes
                 # Solo habla si hay más de 3 pasos y está a mitad del camino
@@ -782,6 +800,10 @@ def run_plan_with_recovery(
                 butler.success()
             
             return True
+        
+        # Si fue detenido por el usuario, salir del while
+        if stopped_by_user:
+            return False
     
     return False
 
@@ -1557,9 +1579,18 @@ def main():
                         # Ejecutar
                         if use_voice_mode and voice_gui and voice_gui.is_open:
                             voice_gui.set_status("Ejecutando...", "#ff9f43")
-                            voice_gui.show_message("⏳ Ejecutando plan...\n\n" + plan_text)
+                            voice_gui.show_message("⏳ Ejecutando...\n(Presiona DETENER para cancelar)\n\n" + plan_text)
+                            voice_gui.start_execution()  # Mostrar botón DETENER
                         
-                        success = run_plan_with_recovery(executor, plan, user_input)
+                        try:
+                            # Pasar voice_gui para poder verificar detención
+                            gui_for_stop = voice_gui if (use_voice_mode and voice_gui and voice_gui.is_open) else None
+                            success = run_plan_with_recovery(executor, plan, user_input, voice_gui=gui_for_stop)
+                        finally:
+                            # Ocultar botón DETENER al terminar
+                            if use_voice_mode and voice_gui and voice_gui.is_open:
+                                voice_gui.end_execution()
+                                voice_gui.clear_stop()
                         
                         if success:
                             print("\n✅ ¡Listo!")
@@ -1567,10 +1598,12 @@ def main():
                                 voice_gui.set_status("Completado", "#00ff88")
                                 voice_gui.show_message("✅ ¡Completado!\n\nGraba otro comando.")
                         else:
-                            print("\n⚠️ Completado parcialmente")
+                            # Verificar si fue detenido por usuario
                             if use_voice_mode and voice_gui and voice_gui.is_open:
-                                voice_gui.set_status("Parcial", "#ff9f43")
-                                voice_gui.show_message("⚠️ Completado parcialmente\n\nGraba otro comando.")
+                                voice_gui.set_status("Detenido", "#ff9f43")
+                                # El mensaje ya se puso en _on_stop_click
+                            else:
+                                print("\n⚠️ Completado parcialmente")
                             
                     except Exception as e:
                         print(f"\n❌ Error: {e}")

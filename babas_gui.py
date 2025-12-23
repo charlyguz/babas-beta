@@ -85,6 +85,8 @@ class BabasControlPanel(ctk.CTkToplevel):
         # Resultado de grabación
         self.result_queue = queue.Queue()
         self.confirm_queue = queue.Queue()
+        self.stop_queue = queue.Queue()  # Para señalizar detención
+        self._stop_requested = False
     
     def _init_audio(self):
         """Inicializa los sistemas de audio"""
@@ -210,6 +212,21 @@ class BabasControlPanel(ctk.CTkToplevel):
         # Ocultar botones hasta que haya plan
         self._hide_confirm_buttons()
         
+        # === BOTÓN DETENER (grande y visible) ===
+        self.stop_btn = ctk.CTkButton(
+            self,
+            text="🛑 DETENER",
+            width=370,
+            height=50,
+            font=("Segoe UI", 16, "bold"),
+            fg_color=Colors.RED,
+            hover_color="#cc2233",
+            text_color="white",
+            command=self._on_stop_click
+        )
+        self.stop_btn.pack(padx=15, pady=(0, 10))
+        self._hide_stop_button()  # Oculto hasta que se ejecute algo
+        
         # === BOTÓN CERRAR ===
         close_frame = ctk.CTkFrame(self, fg_color="transparent")
         close_frame.pack(fill="x", padx=15, pady=(0, 15))
@@ -218,8 +235,8 @@ class BabasControlPanel(ctk.CTkToplevel):
             close_frame,
             text="🚪 Cerrar BABAS",
             width=370,
-            height=45,
-            font=("Segoe UI", 14),
+            height=40,
+            font=("Segoe UI", 13),
             fg_color=Colors.PURPLE,
             hover_color="#7c3aed",
             command=self._on_close_click
@@ -236,6 +253,23 @@ class BabasControlPanel(ctk.CTkToplevel):
         self.accept_btn.configure(state="normal", fg_color=Colors.GREEN)
         self.deny_btn.configure(state="normal", fg_color=Colors.RED)
         self.waiting_confirmation = True
+    
+    def _hide_stop_button(self):
+        """Oculta el botón de detener"""
+        self.stop_btn.configure(state="disabled", fg_color=Colors.TEXT_DIM)
+    
+    def _show_stop_button(self):
+        """Muestra el botón de detener"""
+        self.stop_btn.configure(state="normal", fg_color=Colors.RED)
+        self._stop_requested = False
+    
+    def _on_stop_click(self):
+        """Cuando se presiona el botón de detener"""
+        self._stop_requested = True
+        self.stop_queue.put(True)
+        self.status_indicator.configure(text="● DETENIDO", text_color=Colors.RED)
+        self.set_plan_text("⛔ Ejecución detenida por el usuario.\n\nGraba otro comando.")
+        self._hide_stop_button()
     
     def _toggle_recording(self):
         """Alterna entre grabar y parar"""
@@ -411,6 +445,40 @@ class BabasControlPanel(ctk.CTkToplevel):
             return self.confirm_queue.get(timeout=timeout)
         except queue.Empty:
             return None
+    
+    def start_execution(self):
+        """Llamar cuando inicia la ejecución de un plan"""
+        self._stop_requested = False
+        # Limpiar cola de stop
+        while not self.stop_queue.empty():
+            try:
+                self.stop_queue.get_nowait()
+            except:
+                break
+        self._show_stop_button()
+    
+    def end_execution(self):
+        """Llamar cuando termina la ejecución"""
+        self._hide_stop_button()
+    
+    def is_stop_requested(self) -> bool:
+        """Verifica si se pidió detener"""
+        # Verificar cola sin bloquear
+        try:
+            self.stop_queue.get_nowait()
+            self._stop_requested = True
+        except queue.Empty:
+            pass
+        return self._stop_requested
+    
+    def clear_stop(self):
+        """Limpia la señal de detención"""
+        self._stop_requested = False
+        while not self.stop_queue.empty():
+            try:
+                self.stop_queue.get_nowait()
+            except:
+                break
 
 
 # =============================================================================
@@ -491,6 +559,27 @@ class VoiceControlManager:
     def close_requested(self) -> bool:
         """Verifica si se pidió cerrar"""
         return self._close_requested
+    
+    def start_execution(self):
+        """Inicia modo ejecución (muestra botón detener)"""
+        if self.panel and self.is_open:
+            self.panel.after(0, self.panel.start_execution)
+    
+    def end_execution(self):
+        """Termina modo ejecución (oculta botón detener)"""
+        if self.panel and self.is_open:
+            self.panel.after(0, self.panel.end_execution)
+    
+    def is_stop_requested(self) -> bool:
+        """Verifica si se pidió detener la ejecución"""
+        if self.panel and self.is_open:
+            return self.panel.is_stop_requested()
+        return False
+    
+    def clear_stop(self):
+        """Limpia la señal de detención"""
+        if self.panel and self.is_open:
+            self.panel.clear_stop()
     
     def close(self):
         """Cierra el panel"""
