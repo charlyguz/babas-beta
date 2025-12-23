@@ -691,9 +691,14 @@ def run_plan_with_recovery(
                 executor.execute(step)
                 completed_steps.append(step)
                 
-                # Mayordomo comenta progreso (ocasionalmente)
-                if butler:
-                    butler.step_complete()
+                # Mayordomo comenta progreso solo en checkpoints importantes
+                # Solo habla si hay más de 3 pasos y está a mitad del camino
+                total_steps = len(current_plan.steps)
+                current_step = i + 1
+                if butler and total_steps >= 4:
+                    # Checkpoint a la mitad
+                    if current_step == total_steps // 2:
+                        butler.say("Vamos por buen camino, señor.")
                 
             except Exception as e:
                 error_msg = f"{type(e).__name__}: {str(e)}"
@@ -707,10 +712,9 @@ def run_plan_with_recovery(
                 if retry_count < max_retries:
                     print(f"\n🔄 Intentando auto-recuperación ({retry_count + 1}/{max_retries})...")
                     
-                    # Mayordomo reporta error y recuperación
+                    # Mayordomo reporta error (solo una frase, no dos)
                     if butler:
-                        butler.error()
-                        butler.recovery()
+                        butler.say("Un momento, señor. Encontré un obstáculo, pero tengo un plan alternativo.")
                     
                     # Obtener contexto actual
                     try:

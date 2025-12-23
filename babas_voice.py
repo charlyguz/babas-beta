@@ -36,70 +36,61 @@ except ImportError:
 # =============================================================================
 
 class ButlerPhrases:
-    """Frases estilo Jarvis para diferentes situaciones"""
+    """Frases estilo mayordomo británico para diferentes situaciones"""
     
     GREETINGS = [
-        "A sus órdenes, señor.",
-        "Buenos días, señor. ¿En qué puedo servirle?",
-        "Estoy a su disposición, señor.",
-        "Sistema listo, señor. ¿Cuál es su deseo?",
-        "BABAS a su servicio, señor.",
+        "A sus órdenes, señor. ¿En qué puedo asistirle hoy?",
+        "Buenos días, señor. Estoy listo para sus instrucciones.",
+        "Bienvenido, señor. El sistema está operativo.",
+        "A su servicio, señor.",
     ]
     
     PLANNING = [
-        "Analizando su solicitud, señor.",
-        "Entendido, señor. Preparando el plan.",
-        "Procesando, señor. Un momento.",
-        "Permítame elaborar una estrategia, señor.",
+        "Entendido, señor. Permítame preparar un plan.",
+        "Muy bien, señor. Analizando la mejor estrategia.",
+        "Comprendido. Elaborando los pasos necesarios.",
     ]
     
     EXECUTING = [
-        "Ejecutando, señor.",
-        "En proceso, señor.",
-        "Trabajando en ello, señor.",
-        "Iniciando la tarea, señor.",
+        "Procediendo con la tarea, señor.",
+        "En marcha, señor.",
+        "Iniciando operación.",
     ]
     
     STEP_COMPLETE = [
-        "Paso completado, señor.",
-        "Hecho, señor.",
-        "Siguiente paso, señor.",
-        "Avanzando, señor.",
+        "Progresando adecuadamente, señor.",
+        "Avanzando según lo planeado.",
     ]
     
     SUCCESS = [
-        "Tarea completada exitosamente, señor.",
+        "Tarea completada, señor. ¿Hay algo más en lo que pueda servirle?",
         "Misión cumplida, señor.",
-        "Listo, señor. ¿Algo más en lo que pueda ayudarle?",
-        "Operación finalizada con éxito, señor.",
+        "Listo, señor. Todo en orden.",
+        "Operación exitosa, señor.",
     ]
     
     ERROR = [
-        "Ha ocurrido un inconveniente, señor. Permítame intentar de nuevo.",
-        "Encontré un obstáculo, señor. Buscando alternativas.",
-        "Mis disculpas, señor. Algo salió mal. Reintentando.",
-        "Error detectado, señor. Analizando soluciones.",
+        "Un momento, señor. Encontré un obstáculo.",
+        "Mis disculpas, señor. Permítame buscar una alternativa.",
     ]
     
     RECOVERY = [
-        "No se preocupe, señor. Tengo un plan alternativo.",
-        "Encontré otra forma de hacerlo, señor.",
-        "Permítame intentar un enfoque diferente, señor.",
+        "Tengo un plan alternativo, señor.",
+        "No se preocupe, encontré otra forma.",
     ]
     
     GOODBYE = [
-        "Ha sido un placer servirle, señor.",
-        "Hasta pronto, señor.",
-        "Estaré aquí cuando me necesite, señor.",
+        "Ha sido un placer servirle, señor. Hasta pronto.",
         "Que tenga un excelente día, señor.",
+        "Estaré aquí cuando me necesite.",
     ]
     
     MUTED = [
-        "Entendido, señor. Guardaré silencio.",
+        "Entendido. Guardaré silencio.",
     ]
     
     UNMUTED = [
-        "Voz reactivada, señor. A sus órdenes.",
+        "A sus órdenes, señor.",
     ]
     
     @classmethod
