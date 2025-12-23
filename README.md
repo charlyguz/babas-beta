@@ -171,6 +171,47 @@ Si un paso falla, BABAS:
 3. 🤖 Pide a la IA un nuevo plan
 4. 🔄 Reintenta (hasta 3 veces)
 
+## 🎤 Comandos por Voz (Speech-to-Text)
+
+BABAS puede recibir comandos por voz usando OpenAI Whisper.
+
+### Configuración
+
+```bash
+pip install sounddevice numpy
+```
+
+### Cómo Usar
+
+1. Escribe `mic` o `hablar` para activar el modo voz
+2. Presiona ENTER cuando quieras hablar
+3. Habla tu comando
+4. BABAS transcribe y ejecuta
+
+```
+💬 ¿Qué quieres hacer?
+>>> mic
+   🎤 Modo voz activado
+
+🎤 Modo VOZ activo
+>>> [ENTER]
+   🎤 Habla ahora...
+   🔊 Detectado...
+   ✅ Grabado (2.3s)
+   🔄 Transcribiendo...
+   📝 "abre youtube y busca música lofi"
+
+🤖 Analizando...
+```
+
+### Comandos de Voz
+
+| Comando | Descripción |
+|---------|-------------|
+| `mic` / `hablar` | Activar modo voz |
+| `texto` | Volver a modo texto |
+| ENTER (en modo voz) | Empezar a grabar |
+
 ## 🎙️ Mayordomo con Voz (Estilo Jarvis)
 
 BABAS incluye un mayordomo virtual que habla usando ElevenLabs.
