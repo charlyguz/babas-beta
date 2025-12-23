@@ -167,11 +167,8 @@ class VoiceRecorderWindow(ctk.CTkToplevel):
         # Grabar en thread separado
         def record():
             try:
-                # Grabar hasta que se detenga manualmente
-                self.audio_data = self.recorder.record_until_silence(
-                    max_duration=60,
-                    silence_duration=120  # No parar por silencio
-                )
+                # Usar el nuevo método que graba TODO hasta que se pare
+                self.audio_data = self.recorder.record_until_stopped(max_duration=60)
             except Exception as e:
                 self.after(0, lambda: self.status_label.configure(
                     text=f"❌ Error: {e}", text_color=Colors.RED

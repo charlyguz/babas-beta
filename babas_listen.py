@@ -151,6 +151,55 @@ class AudioRecorder:
         
         return audio
     
+    def record_until_stopped(self, max_duration: float = 60) -> Optional[np.ndarray]:
+        """
+        Graba TODO el audio hasta que se llame a stop().
+        No hace detección de silencio - graba todo.
+        """
+        if not SOUNDDEVICE_AVAILABLE:
+            print("❌ sounddevice no disponible")
+            return None
+        
+        self.audio_data = []
+        self.recording = True
+        self._stop_event.clear()
+        
+        try:
+            def callback(indata, frames, time, status):
+                if self._stop_event.is_set():
+                    raise sd.CallbackAbort()
+                # Guardar TODO el audio
+                self.audio_data.append(indata.copy().flatten())
+            
+            with sd.InputStream(samplerate=self.sample_rate,
+                              channels=CHANNELS,
+                              dtype='float32',
+                              blocksize=1024,
+                              callback=callback):
+                # Esperar hasta que se llame a stop() o max_duration
+                self._stop_event.wait(timeout=max_duration)
+        
+        except sd.CallbackAbort:
+            pass
+        except Exception as e:
+            print(f"❌ Error grabando: {e}")
+            return None
+        finally:
+            self.recording = False
+        
+        if not self.audio_data:
+            return None
+        
+        # Concatenar chunks
+        audio = np.concatenate(self.audio_data)
+        
+        # Verificar duración mínima (0.3 segundos)
+        duration = len(audio) / self.sample_rate
+        if duration < 0.3:
+            return None
+        
+        return audio
+    
     def record_for_duration(self, duration: float) -> Optional[np.ndarray]:
         """Graba por un tiempo específico"""
         if not SOUNDDEVICE_AVAILABLE:
