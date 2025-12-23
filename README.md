@@ -171,11 +171,45 @@ Si un paso falla, BABAS:
 3. 🤖 Pide a la IA un nuevo plan
 4. 🔄 Reintenta (hasta 3 veces)
 
+## 🎙️ Mayordomo con Voz (Estilo Jarvis)
+
+BABAS incluye un mayordomo virtual que habla usando ElevenLabs.
+
+### Configuración
+
+1. Obtén una API key de [ElevenLabs](https://elevenlabs.io/)
+2. Agrega a tu `.env`:
+```
+ELEVENLABS_API_KEY=tu-api-key-aqui
+```
+3. Instala las dependencias de audio:
+```bash
+pip install elevenlabs pygame
+```
+
+### Comandos de Voz
+
+| Comando | Descripción |
+|---------|-------------|
+| `voz` / `voice` | Activar/silenciar mayordomo |
+| `calla` / `shut up` | Callar inmediatamente |
+
+### Frases del Mayordomo
+
+El mayordomo habla en momentos clave:
+- **Inicio**: "A sus órdenes, señor."
+- **Analizando**: "Procesando, señor. Un momento."
+- **Ejecutando**: "Ejecutando, señor."
+- **Éxito**: "Tarea completada exitosamente, señor."
+- **Error**: "Ha ocurrido un inconveniente, señor. Permítame intentar de nuevo."
+- **Despedida**: "Ha sido un placer servirle, señor."
+
 ## ⚠️ Notas
 
 - Los screenshots de debug se guardan en una carpeta temporal que se borra al cerrar
 - El perfil `babas-profile/` guarda tus sesiones entre usos
 - Nunca compartas tu archivo `.env` con tu API key
+- La voz es opcional - BABAS funciona sin ElevenLabs
 
 ## 📝 Licencia
 
