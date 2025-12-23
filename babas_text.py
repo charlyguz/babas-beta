@@ -924,13 +924,13 @@ HACKER_SUCCESS_PHRASES = [
     "Misión cumplida. El mainframe ha caído.",
 ]
 
-async def run_hacker_mode(page, butler=None):
+def run_hacker_mode(page, butler=None):
     """
     🎮 Easter Egg: Modo Hacker
     Va a hackertyper.com y simula hackear algo épico.
     """
     import random
-    import asyncio
+    import time as _time
     
     print("\n" + "="*60)
     print("🔓 INICIANDO PROTOCOLO DE INTRUSIÓN...")
@@ -941,14 +941,14 @@ async def run_hacker_mode(page, butler=None):
     
     try:
         # Ir a hackertyper
-        await asyncio.sleep(0.5)
+        _time.sleep(0.5)
         page.goto("https://hackertyper.com/", wait_until="domcontentloaded")
-        await asyncio.sleep(1)
+        _time.sleep(1)
         
         # Hacer clic para cerrar el popup si existe
         try:
             page.keyboard.press("Escape")
-            await asyncio.sleep(0.3)
+            _time.sleep(0.3)
         except:
             pass
         
@@ -963,7 +963,7 @@ async def run_hacker_mode(page, butler=None):
             
             # Delay variable para efecto dramático
             delay = random.uniform(0.01, 0.05)
-            await asyncio.sleep(delay)
+            _time.sleep(delay)
             
             # Mostrar frases de progreso
             if i == 30:
@@ -976,7 +976,7 @@ async def run_hacker_mode(page, butler=None):
                 print(f"   🔥 {random.choice(HACKER_PHRASES)}")
         
         # Efecto final
-        await asyncio.sleep(0.5)
+        _time.sleep(0.5)
         
         print("\n" + "="*60)
         success_phrase = random.choice(HACKER_SUCCESS_PHRASES)
@@ -987,7 +987,7 @@ async def run_hacker_mode(page, butler=None):
             butler.say(success_phrase)
         
         # Pequeña pausa para disfrutar el momento
-        await asyncio.sleep(2)
+        _time.sleep(2)
         
     except Exception as e:
         print(f"   ❌ Error en modo hacker: {e}")
@@ -1458,7 +1458,7 @@ def main():
                     
                     # 🎮 EASTER EGG: Modo Hacker
                     if any(word in cmd for word in ["hackear", "hackea", "hack", "hacker"]):
-                        await run_hacker_mode(executor.current_page, butler)
+                        run_hacker_mode(executor.current_page, butler)
                         continue
                     
                     # Crear y ejecutar plan
