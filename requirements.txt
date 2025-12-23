@@ -13,3 +13,7 @@ pydantic>=2.0.0
 # Variables de entorno
 python-dotenv>=1.0.0
 
+# Síntesis de voz (opcional - para mayordomo)
+elevenlabs>=1.0.0
+pygame>=2.5.0
+

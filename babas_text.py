@@ -13,9 +13,19 @@ from playwright.sync_api import sync_playwright, Page, BrowserContext
 print("🔧 Cargando variables de entorno...")
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-print("✅ Cliente OpenAI inicializado\n")
+print("✅ Cliente OpenAI inicializado")
 
-MODEL = "gpt-5-mini"
+# ---------- MAYORDOMO (VOZ) ----------
+try:
+    from babas_voice import init_butler, shutdown_butler, get_butler
+    VOICE_AVAILABLE = True
+except ImportError:
+    VOICE_AVAILABLE = False
+    def init_butler(): return None
+    def shutdown_butler(): pass
+    def get_butler(): return None
+
+MODEL = "gpt-4o-mini"
 MAX_RETRIES = 3  # Intentos de auto-recuperación
 
 # =============================================================================
@@ -575,6 +585,11 @@ def create_plan(user_instruction: str, context: Dict = None) -> Plan:
     """Crea un plan usando IA"""
     print(f"🤖 Analizando: '{user_instruction}'")
     
+    # Mayordomo anuncia
+    butler = get_butler()
+    if butler:
+        butler.planning()
+    
     # OpenAI requiere que el mensaje contenga "json" cuando usamos response_format
     user_message = f"{user_instruction}\n\nResponde SOLO con JSON válido."
     
@@ -654,9 +669,14 @@ def run_plan_with_recovery(
     completed_steps = []
     current_plan = plan
     retry_count = 0
+    butler = get_butler()
     
     while retry_count <= max_retries:
         print(f"\n🎬 Ejecutando {len(current_plan.steps)} pasos...\n")
+        
+        # Mayordomo anuncia inicio
+        if butler and retry_count == 0:
+            butler.executing()
         
         for i, step in enumerate(current_plan.steps):
             print(f"{'━'*50}")
@@ -671,6 +691,10 @@ def run_plan_with_recovery(
                 executor.execute(step)
                 completed_steps.append(step)
                 
+                # Mayordomo comenta progreso (ocasionalmente)
+                if butler:
+                    butler.step_complete()
+                
             except Exception as e:
                 error_msg = f"{type(e).__name__}: {str(e)}"
                 print(f"   ❌ ERROR: {error_msg}")
@@ -682,6 +706,11 @@ def run_plan_with_recovery(
                 
                 if retry_count < max_retries:
                     print(f"\n🔄 Intentando auto-recuperación ({retry_count + 1}/{max_retries})...")
+                    
+                    # Mayordomo reporta error y recuperación
+                    if butler:
+                        butler.error()
+                        butler.recovery()
                     
                     # Obtener contexto actual
                     try:
@@ -719,6 +748,11 @@ def run_plan_with_recovery(
             # El for terminó sin break = éxito
             print(f"\n{'━'*50}")
             print(f"✅ ¡Plan completado exitosamente!")
+            
+            # Mayordomo celebra
+            if butler:
+                butler.success()
+            
             return True
     
     return False
@@ -1029,6 +1063,8 @@ def show_help():
     print("   pestañas, tabs     → Ver pestañas abiertas")
     print("   nueva, new         → Abrir nueva pestaña")
     print("   captura, screenshot → Tomar screenshot")
+    print("   voz, voice         → Activar/silenciar mayordomo")
+    print("   calla, shut up     → Callar al mayordomo ahora")
     print("\n💡 EJEMPLOS DE TAREAS:")
     print('   • "abre youtube y busca lofi music"')
     print('   • "ve a gmail"')
@@ -1048,8 +1084,16 @@ def main():
     print("   • Auto-recuperación con IA cuando falla")
     print("   • Múltiples pestañas")
     print("   • Conectar a TU navegador actual")
+    print("   • 🎙️ Mayordomo con voz (escribe 'voz' para controlar)")
     print("\n💡 Escribe 'ayuda' para ver comandos")
     print("="*60)
+    
+    # Inicializar mayordomo con voz
+    butler = None
+    if VOICE_AVAILABLE:
+        butler = init_butler()
+        if butler and butler.enabled:
+            print("\n🎙️ Mayordomo con voz activado")
     
     profile_path = None
     
@@ -1108,6 +1152,10 @@ def main():
             print("✅ ¡Listo! Escribe tus comandos.")
             print("="*60)
             
+            # Mayordomo saluda
+            if butler and butler.enabled:
+                butler.greet()
+            
             # === LOOP INTERACTIVO ===
             while True:
                 try:
@@ -1121,6 +1169,9 @@ def main():
                     cmd = user_input.lower()
                     
                     if cmd in ["salir", "exit", "q", "quit"]:
+                        # Mayordomo se despide
+                        if butler and butler.enabled:
+                            butler.goodbye()
                         print("\n👋 ¡Hasta luego!")
                         break
                     
@@ -1151,6 +1202,20 @@ def main():
                         filename = f"screenshot_{datetime.now().strftime('%H%M%S')}.png"
                         executor.current_page.screenshot(path=filename)
                         print(f"   📸 Guardado: {filename}")
+                        continue
+                    
+                    # Comandos de voz del mayordomo
+                    if cmd in ["voz", "voice", "v"]:
+                        if butler and butler.enabled:
+                            butler.toggle_mute()
+                        else:
+                            print("   ⚠️ Mayordomo no disponible")
+                        continue
+                    
+                    if cmd in ["calla", "callate", "shut up", "shh", "silence"]:
+                        if butler and butler.enabled:
+                            butler.shut_up()
+                            print("   🤫 Mayordomo silenciado")
                         continue
                     
                     # Crear y ejecutar plan
@@ -1230,13 +1295,18 @@ def main():
                     pass
             
             print("   ✅ Sesión finalizada")
+            
+            # Apagar mayordomo
+            shutdown_butler()
     
     except KeyboardInterrupt:
         print("\n👋 Cancelado")
         cleanup_temp_dir()
+        shutdown_butler()
     except Exception as e:
         print(f"\n💥 Error fatal: {e}")
         cleanup_temp_dir()
+        shutdown_butler()
         raise
 
 if __name__ == "__main__":
