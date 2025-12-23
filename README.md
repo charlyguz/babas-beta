@@ -1,5 +1,7 @@
 # BABAS - Browser Automation Bot Assistant System
 
+<!-- preview beta V0.1 tested done formating done -->
+
 AI-powered web automation with voice control.
 
 ## Quick Start

@@ -2,7 +2,7 @@
 # BABAS - Archivos ignorados
 # =============================================================================
 
-# Perfiles de navegador de BABAS
+# babas profiles
 babas-profile/
 babas-brave-profile/
 babas-chrome-profile/

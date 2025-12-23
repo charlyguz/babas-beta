@@ -1,3 +1,4 @@
+# preview beta V0.1 tested done formating done
 import os
 import json
 import re
@@ -39,8 +40,8 @@ except ImportError:
     def get_voice_gui(): return None
     VoiceInputGUI = None
 
-MODEL = "gpt-4o-mini"
-MAX_RETRIES = 3
+MODEL = "gpt-5.2"
+MAX_RETRIES = 2
 
 class PageAnalyzer:
     @staticmethod
