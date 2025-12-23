@@ -61,7 +61,7 @@ class BabasControlPanel(ctk.CTkToplevel):
         
         # Configurar ventana
         self.title("🎛️ BABAS - Panel de Control")
-        self.geometry("400x550")
+        self.geometry("400x750")
         self.configure(fg_color=Colors.BG)
         self.resizable(False, False)
         self.attributes("-topmost", True)
@@ -71,7 +71,7 @@ class BabasControlPanel(ctk.CTkToplevel):
         screen_width = self.winfo_screenwidth()
         x = screen_width - 420
         y = 50
-        self.geometry(f"400x550+{x}+{y}")
+        self.geometry(f"400x750+{x}+{y}")
         
         # Al cerrar
         self.protocol("WM_DELETE_WINDOW", self._on_close_click)
