@@ -1283,16 +1283,8 @@ def show_help():
 # =============================================================================
 
 def main():
-    print("="*60)
-    print("🤖 BABAS - Asistente de Automatización Web")
-    print("="*60)
-    print("\n📋 Capacidades:")
-    print("   • Navegación web inteligente")
-    print("   • Auto-recuperación con IA cuando falla")
-    print("   • Múltiples pestañas")
-    print("   • Conectar a TU navegador actual")
-    print("   • 🎙️ Mayordomo con voz (escribe 'voz' para controlar)")
-    print("\n💡 Escribe 'ayuda' para ver comandos")
+    print("\n" + "="*60)
+    print("🤖 INICIANDO SISTEMA BABAS...")
     print("="*60)
     
     # Inicializar mayordomo con voz (output)
@@ -1300,13 +1292,51 @@ def main():
     if VOICE_OUTPUT_AVAILABLE:
         butler = init_butler()
         if butler and butler.enabled:
-            print("\n🎙️ Mayordomo con voz activado")
+            print("🎙️ Mayordomo activado")
+            butler.say("Iniciando sistema BABAS, señor.")
     
-    # GUI de voz (se abre cuando el usuario lo pide)
+    print("\n📋 Capacidades:")
+    print("   • Navegación web inteligente")
+    print("   • Auto-recuperación con IA")
+    print("   • Múltiples pestañas")
+    print("   • Comandos por voz")
+    
+    # === SELECCIÓN DE MODO ===
+    print("\n" + "─"*40)
+    print("📌 SELECCIONA MODO DE ENTRADA:")
+    print("─"*40)
+    print("\n   [1] ⌨️  TEXTO - Escribir comandos")
+    print("   [2] 🎤 VOZ   - Hablar comandos (abre ventana)")
+    
+    if butler and butler.enabled:
+        butler.say("¿Qué modo prefiere, señor? ¿Texto o voz?")
+    
+    use_voice_mode = False
     voice_gui = None
-    if VOICE_GUI_AVAILABLE:
-        voice_gui = get_voice_gui()
-        print("🎤 Escribe 'mic' para grabar comandos por voz")
+    
+    while True:
+        mode_choice = input("\n>>> Opción (1/2) [1]: ").strip() or "1"
+        
+        if mode_choice == "1":
+            print("\n✅ Modo TEXTO seleccionado")
+            if butler and butler.enabled:
+                butler.say("Modo texto activado, señor.")
+            break
+        elif mode_choice == "2":
+            if VOICE_GUI_AVAILABLE:
+                use_voice_mode = True
+                voice_gui = get_voice_gui()
+                print("\n✅ Modo VOZ seleccionado")
+                print("   → Se abrirá ventana de control después de conectar")
+                if butler and butler.enabled:
+                    butler.say("Modo voz activado, señor. Abriendo panel de control.")
+                break
+            else:
+                print("   ⚠️ GUI de voz no disponible. Usando texto.")
+                print("   Instala: pip install customtkinter sounddevice")
+                break
+        else:
+            print("   Por favor elige 1 o 2")
     
     profile_path = None
     
@@ -1362,8 +1392,15 @@ def main():
             executor = ActionExecutor(tab_manager, initial_page)
             
             print("\n" + "="*60)
-            print("✅ ¡Listo! Escribe tus comandos.")
+            print("✅ ¡Listo!")
             print("="*60)
+            
+            # Si eligió modo voz, abrir panel de control
+            if use_voice_mode and voice_gui:
+                print("\n🎛️ Abriendo panel de control de voz...")
+                voice_gui.open(butler)
+                import time
+                time.sleep(1)  # Esperar a que se abra
             
             # Mayordomo saluda
             if butler and butler.enabled:
@@ -1372,21 +1409,47 @@ def main():
             # === LOOP INTERACTIVO ===
             while True:
                 try:
-                    # Obtener input por texto
-                    print("\n💬 ¿Qué quieres hacer? (o 'salir', 'mic' para voz)")
-                    user_input = input(">>> ").strip()
+                    # === MODO VOZ ===
+                    if use_voice_mode and voice_gui and voice_gui.is_open:
+                        # Verificar si pidieron cerrar
+                        if voice_gui.close_requested():
+                            print("\n👋 Cerrando BABAS...")
+                            if butler and butler.enabled:
+                                butler.goodbye()
+                            break
+                        
+                        # Esperar comando de la GUI
+                        voice_command = voice_gui.get_voice_command(timeout=0.5)
+                        
+                        if not voice_command:
+                            continue
+                        
+                        if voice_command == "__CLOSE__":
+                            print("\n👋 Cerrando BABAS...")
+                            if butler and butler.enabled:
+                                butler.goodbye()
+                            break
+                        
+                        print(f"\n🎤 Comando: \"{voice_command}\"")
+                        user_input = voice_command
+                        
+                        if butler and butler.enabled:
+                            butler.say(f"Entendido: {voice_command[:30]}")
                     
-                    if not user_input:
-                        continue
+                    # === MODO TEXTO ===
+                    else:
+                        print("\n💬 ¿Qué quieres hacer? (o 'salir')")
+                        user_input = input(">>> ").strip()
+                        
+                        if not user_input:
+                            continue
                     
                     # Comandos especiales
                     cmd = user_input.lower()
                     
                     if cmd in ["salir", "exit", "q", "quit"]:
-                        # Cerrar GUI de voz si está abierta
                         if voice_gui and voice_gui.is_open:
                             voice_gui.close()
-                        # Mayordomo se despide
                         if butler and butler.enabled:
                             butler.goodbye()
                         print("\n👋 ¡Hasta luego!")
@@ -1397,7 +1460,7 @@ def main():
                         continue
                     
                     if cmd in ["pestañas", "tabs"]:
-                        print("\n📑 Pestañas controladas por BABAS:")
+                        print("\n📑 Pestañas:")
                         for name in tab_manager.list_tabs():
                             page = tab_manager.get_tab(name)
                             marker = "→" if name == executor.current_tab_name else " "
@@ -1421,89 +1484,93 @@ def main():
                         print(f"   📸 Guardado: {filename}")
                         continue
                     
-                    # Toggle silencio del mayordomo
-                    if cmd in ["voz", "voice", "v"]:
-                        if butler and butler.enabled:
-                            butler.toggle_mute()
-                        else:
-                            print("   ⚠️ Mayordomo no disponible")
-                        continue
-                    
                     if cmd in ["calla", "callate", "shut up", "shh", "silence"]:
                         if butler and butler.enabled:
                             butler.shut_up()
-                            print("   🤫 Mayordomo silenciado")
+                            print("   🤫 Silenciado")
                         continue
-                    
-                    # 🎤 ABRIR GUI DE VOZ
-                    if cmd in ["mic", "hablar", "grabar", "escuchar", "listen"]:
-                        if voice_gui and VOICE_GUI_AVAILABLE:
-                            print("\n🎤 Abriendo ventana de grabación...")
-                            print("   → Clic en el botón para grabar")
-                            print("   → Clic de nuevo para enviar")
-                            print("   → Cierra la ventana para volver a texto\n")
-                            
-                            if butler and butler.enabled:
-                                butler.say("Abriendo ventana de grabación, señor.")
-                            
-                            # Abrir GUI
-                            voice_gui.open(butler)
-                            
-                            # Esperar comandos de la GUI
-                            while voice_gui.is_open:
-                                voice_command = voice_gui.get_voice_command(timeout=0.5)
-                                
-                                if voice_command:
-                                    print(f"\n🎤 Comando de voz: \"{voice_command}\"")
-                                    
-                                    if butler and butler.enabled:
-                                        butler.say(f"Entendido: {voice_command[:30]}")
-                                    
-                                    # Procesar el comando igual que texto
-                                    user_input = voice_command
-                                    break
-                            else:
-                                # Se cerró la ventana sin comando
-                                print("   ⌨️ Volviendo a modo texto")
-                                continue
-                        else:
-                            print("   ⚠️ GUI de voz no disponible")
-                            print("   Instala: pip install customtkinter sounddevice numpy")
-                            continue
                     
                     # 🎮 EASTER EGG: Modo Hacker
                     if any(word in cmd for word in ["hackear", "hackea", "hack", "hacker"]):
+                        if use_voice_mode and voice_gui and voice_gui.is_open:
+                            voice_gui.set_status("Hackeando...", "#ff4757")
                         run_hacker_mode(executor.current_page, butler)
+                        if use_voice_mode and voice_gui and voice_gui.is_open:
+                            voice_gui.set_status("Listo", "#00ff88")
+                            voice_gui.show_message("✅ Hackeo completado\n\nGraba otro comando.")
                         continue
                     
                     # Crear y ejecutar plan
                     print()
                     try:
+                        if use_voice_mode and voice_gui and voice_gui.is_open:
+                            voice_gui.set_status("Creando plan...", "#00d4ff")
+                        
                         plan = create_plan(user_input)
                         
-                        # Mostrar plan
-                        print("\n📋 Plan:")
+                        # Construir texto del plan
+                        plan_lines = []
                         for i, step in enumerate(plan.steps, 1):
                             details = step.value or step.selector or step.tab_name or ""
                             if details:
-                                details = f" → {details[:40]}"
-                            print(f"   {i}. {step.action}{details}")
+                                details = f" → {details[:35]}"
+                            plan_lines.append(f"{i}. {step.action}{details}")
+                        plan_text = "\n".join(plan_lines)
                         
-                        confirm = input("\n¿Ejecutar? (s/n) [s]: ").strip().lower()
-                        if confirm == 'n':
-                            print("❌ Cancelado")
+                        # Mostrar plan en consola
+                        print("\n📋 Plan:")
+                        for line in plan_lines:
+                            print(f"   {line}")
+                        
+                        # === CONFIRMACIÓN ===
+                        confirmed = False
+                        
+                        if use_voice_mode and voice_gui and voice_gui.is_open:
+                            # Confirmar desde GUI
+                            confirm_result = voice_gui.show_plan_and_confirm(
+                                f"📋 Plan para:\n\"{user_input[:50]}\"\n\n" + plan_text,
+                                timeout=120
+                            )
+                            confirmed = confirm_result == True
+                            
+                            if not confirmed:
+                                print("❌ Cancelado desde GUI")
+                                voice_gui.show_message("Cancelado.\n\nGraba otro comando.")
+                                continue
+                        else:
+                            # Confirmar desde terminal
+                            confirm = input("\n¿Ejecutar? (s/n) [s]: ").strip().lower()
+                            if confirm == 'n':
+                                print("❌ Cancelado")
+                                continue
+                            confirmed = True
+                        
+                        if not confirmed:
                             continue
                         
                         # Ejecutar
+                        if use_voice_mode and voice_gui and voice_gui.is_open:
+                            voice_gui.set_status("Ejecutando...", "#ff9f43")
+                            voice_gui.show_message("⏳ Ejecutando plan...\n\n" + plan_text)
+                        
                         success = run_plan_with_recovery(executor, plan, user_input)
                         
                         if success:
                             print("\n✅ ¡Listo!")
+                            if use_voice_mode and voice_gui and voice_gui.is_open:
+                                voice_gui.set_status("Completado", "#00ff88")
+                                voice_gui.show_message("✅ ¡Completado!\n\nGraba otro comando.")
                         else:
                             print("\n⚠️ Completado parcialmente")
+                            if use_voice_mode and voice_gui and voice_gui.is_open:
+                                voice_gui.set_status("Parcial", "#ff9f43")
+                                voice_gui.show_message("⚠️ Completado parcialmente\n\nGraba otro comando.")
                             
                     except Exception as e:
                         print(f"\n❌ Error: {e}")
+                        if use_voice_mode and voice_gui and voice_gui.is_open:
+                            voice_gui.set_status("Error", "#ff4757")
+                            voice_gui.show_message(f"❌ Error: {e}\n\nGraba otro comando.")
                         continue
                 
                 except KeyboardInterrupt:
