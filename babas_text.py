@@ -34,6 +34,15 @@ except ImportError:
     def get_voice_input(): return None
     VoiceInputMode = None
 
+# ---------- GUI DE VOZ ----------
+try:
+    from babas_gui import get_voice_gui, VoiceInputGUI
+    VOICE_GUI_AVAILABLE = True
+except ImportError:
+    VOICE_GUI_AVAILABLE = False
+    def get_voice_gui(): return None
+    VoiceInputGUI = None
+
 MODEL = "gpt-4o-mini"
 MAX_RETRIES = 3  # Intentos de auto-recuperación
 
@@ -1293,17 +1302,11 @@ def main():
         if butler and butler.enabled:
             print("\n🎙️ Mayordomo con voz activado")
     
-    # Inicializar entrada por voz (input)
-    voice_input = None
-    use_voice_mode = False
-    if VOICE_INPUT_AVAILABLE:
-        voice_input = get_voice_input()
-        if voice_input and voice_input.is_available():
-            # Preguntar preferencia de modo al inicio
-            mode_choice = voice_input.ask_mode_preference(butler)
-            use_voice_mode = (mode_choice == "voice")
-            if use_voice_mode:
-                voice_input.show_voice_instructions()
+    # GUI de voz (se abre cuando el usuario lo pide)
+    voice_gui = None
+    if VOICE_GUI_AVAILABLE:
+        voice_gui = get_voice_gui()
+        print("🎤 Escribe 'mic' para grabar comandos por voz")
     
     profile_path = None
     
@@ -1369,18 +1372,9 @@ def main():
             # === LOOP INTERACTIVO ===
             while True:
                 try:
-                    # Obtener input (texto o voz según modo)
-                    if use_voice_mode and voice_input and voice_input.is_available():
-                        voice_input.active = True
-                        user_input, was_voice = voice_input.get_input_with_mode(butler)
-                        use_voice_mode = voice_input.active  # Por si cambió a texto
-                        
-                        if was_voice and user_input and butler and butler.enabled:
-                            # Mayordomo confirma que escuchó
-                            butler.say(f"Entendido: {user_input[:50]}")
-                    else:
-                        print("\n💬 ¿Qué quieres hacer? (o 'salir')")
-                        user_input = input(">>> ").strip()
+                    # Obtener input por texto
+                    print("\n💬 ¿Qué quieres hacer? (o 'salir', 'mic' para voz)")
+                    user_input = input(">>> ").strip()
                     
                     if not user_input:
                         continue
@@ -1389,6 +1383,9 @@ def main():
                     cmd = user_input.lower()
                     
                     if cmd in ["salir", "exit", "q", "quit"]:
+                        # Cerrar GUI de voz si está abierta
+                        if voice_gui and voice_gui.is_open:
+                            voice_gui.close()
                         # Mayordomo se despide
                         if butler and butler.enabled:
                             butler.goodbye()
@@ -1424,7 +1421,7 @@ def main():
                         print(f"   📸 Guardado: {filename}")
                         continue
                     
-                    # Comandos de voz del mayordomo
+                    # Toggle silencio del mayordomo
                     if cmd in ["voz", "voice", "v"]:
                         if butler and butler.enabled:
                             butler.toggle_mute()
@@ -1438,23 +1435,41 @@ def main():
                             print("   🤫 Mayordomo silenciado")
                         continue
                     
-                    # Comandos de entrada por voz
-                    if cmd in ["mic", "hablar", "voz input", "escuchar", "listen"]:
-                        if voice_input and voice_input.is_available():
-                            use_voice_mode = True
-                            print("   🎤 Modo voz activado")
-                            print("   Presiona ENTER y habla para dar comandos")
+                    # 🎤 ABRIR GUI DE VOZ
+                    if cmd in ["mic", "hablar", "grabar", "escuchar", "listen"]:
+                        if voice_gui and VOICE_GUI_AVAILABLE:
+                            print("\n🎤 Abriendo ventana de grabación...")
+                            print("   → Clic en el botón para grabar")
+                            print("   → Clic de nuevo para enviar")
+                            print("   → Cierra la ventana para volver a texto\n")
+                            
                             if butler and butler.enabled:
-                                butler.say("Modo de voz activado, señor. Estoy escuchando.")
+                                butler.say("Abriendo ventana de grabación, señor.")
+                            
+                            # Abrir GUI
+                            voice_gui.open(butler)
+                            
+                            # Esperar comandos de la GUI
+                            while voice_gui.is_open:
+                                voice_command = voice_gui.get_voice_command(timeout=0.5)
+                                
+                                if voice_command:
+                                    print(f"\n🎤 Comando de voz: \"{voice_command}\"")
+                                    
+                                    if butler and butler.enabled:
+                                        butler.say(f"Entendido: {voice_command[:30]}")
+                                    
+                                    # Procesar el comando igual que texto
+                                    user_input = voice_command
+                                    break
+                            else:
+                                # Se cerró la ventana sin comando
+                                print("   ⌨️ Volviendo a modo texto")
+                                continue
                         else:
-                            print("   ⚠️ Entrada por voz no disponible")
-                            print("   Instala: pip install sounddevice numpy")
-                        continue
-                    
-                    if cmd == "texto":
-                        use_voice_mode = False
-                        print("   ⌨️ Modo texto activado")
-                        continue
+                            print("   ⚠️ GUI de voz no disponible")
+                            print("   Instala: pip install customtkinter sounddevice numpy")
+                            continue
                     
                     # 🎮 EASTER EGG: Modo Hacker
                     if any(word in cmd for word in ["hackear", "hackea", "hack", "hacker"]):
