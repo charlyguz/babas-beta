@@ -15,7 +15,7 @@ load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 print("✅ Cliente OpenAI inicializado\n")
 
-MODEL = "gpt-5-nano"
+MODEL = "gpt-5-mini"
 MAX_RETRIES = 3  # Intentos de auto-recuperación
 
 # =============================================================================
@@ -830,9 +830,20 @@ def get_browser_info() -> Dict[str, Dict]:
         }
 
 def get_available_browsers() -> List[str]:
-    """Retorna lista de navegadores instalados"""
+    """Retorna lista de navegadores instalados, Brave primero"""
     browsers = get_browser_info()
-    return [name for name, info in browsers.items() if info.get("path") and os.path.exists(info["path"])]
+    available = []
+    # Orden de preferencia: Brave -> Chrome -> Edge
+    for name in ["brave", "chrome", "edge"]:
+        info = browsers.get(name, {})
+        if info.get("path") and os.path.exists(info["path"]):
+            available.append(name)
+    return available
+
+def get_preferred_browser() -> Optional[str]:
+    """Retorna el navegador preferido (Brave > Chrome > Edge)"""
+    available = get_available_browsers()
+    return available[0] if available else None
 
 def try_connect_to_browser(playwright) -> tuple[Optional[Any], Optional[int], Optional[str]]:
     """
@@ -860,9 +871,17 @@ def is_profile_locked(profile_path: str) -> bool:
             return True
     return False
 
-def launch_browser_with_debug(browser_name: str, use_real_profile: bool = True) -> tuple[bool, int, str]:
+def get_babas_profile_path(browser_name: str) -> str:
+    """Retorna la ruta del perfil de BABAS para un navegador"""
+    system = platform.system().lower()
+    if system == "windows":
+        return os.path.expandvars(rf"%LOCALAPPDATA%\babas-{browser_name}-profile")
+    else:
+        return os.path.expanduser(f"~/.babas-{browser_name}-profile")
+
+def launch_browser_with_debug(browser_name: str) -> tuple[bool, int, str]:
     """
-    Lanza navegador con debug habilitado.
+    Lanza navegador con debug habilitado usando perfil de BABAS.
     Retorna: (success, port, message)
     """
     browsers = get_browser_info()
@@ -874,29 +893,9 @@ def launch_browser_with_debug(browser_name: str, use_real_profile: bool = True) 
     port = info.get("port", 9222)
     system = platform.system().lower()
     
-    # Verificar si el perfil real está en uso
-    real_profile = info.get("profile")
-    profile_in_use = real_profile and is_profile_locked(real_profile)
-    
-    if use_real_profile and real_profile and os.path.exists(real_profile):
-        if profile_in_use:
-            print(f"   ⚠️ Tu {browser_name.capitalize()} ya está abierto con tu perfil.")
-            print(f"   📁 Usaré perfil de BABAS (separado, pero guarda sesiones)")
-            # Usar perfil de BABAS en su lugar
-            if system == "windows":
-                profile = os.path.expandvars(rf"%LOCALAPPDATA%\babas-{browser_name}-profile")
-            else:
-                profile = os.path.expanduser(f"~/.babas-{browser_name}-profile")
-        else:
-            profile = real_profile
-            print(f"   💾 Usando tu perfil real (con tus sesiones)")
-    else:
-        # Usar perfil de BABAS
-        if system == "windows":
-            profile = os.path.expandvars(rf"%LOCALAPPDATA%\babas-{browser_name}-profile")
-        else:
-            profile = os.path.expanduser(f"~/.babas-{browser_name}-profile")
-        print(f"   📁 Usando perfil de BABAS")
+    # Siempre usar perfil de BABAS (guarda sesiones entre usos)
+    profile = get_babas_profile_path(browser_name)
+    print(f"   📁 Perfil BABAS: {os.path.basename(profile)}")
     
     args = [
         info["path"],
@@ -909,7 +908,6 @@ def launch_browser_with_debug(browser_name: str, use_real_profile: bool = True) 
     
     try:
         if system == "windows":
-            # Usar CREATE_NEW_PROCESS_GROUP para mejor control
             subprocess.Popen(
                 args, 
                 creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP
@@ -920,120 +918,107 @@ def launch_browser_with_debug(browser_name: str, use_real_profile: bool = True) 
     except Exception as e:
         return False, 0, str(e)
 
+def try_launch_and_connect(playwright, browser_name: str) -> tuple[bool, Any, int]:
+    """
+    Intenta lanzar un navegador y conectarse.
+    Retorna: (success, browser, port)
+    """
+    print(f"\n🚀 Lanzando {browser_name.capitalize()}...")
+    
+    success, port, msg = launch_browser_with_debug(browser_name)
+    
+    if not success:
+        print(f"   ❌ Error: {msg}")
+        return False, None, 0
+    
+    print(f"   ⏳ Conectando...")
+    
+    for i in range(30):  # 15 segundos de espera
+        time.sleep(0.5)
+        if check_port(port):
+            time.sleep(1)  # Pausa adicional
+            try:
+                browser = playwright.chromium.connect_over_cdp(f"http://localhost:{port}")
+                contexts = browser.contexts
+                pages_count = len(contexts[0].pages) if contexts else 0
+                print(f"   ✅ ¡Conectado! ({pages_count} pestañas)")
+                return True, browser, port
+            except:
+                continue
+    
+    print("   ❌ No se pudo conectar")
+    return False, None, 0
+
 def select_session_mode(playwright) -> tuple[str, dict, Any]:
     """
-    Menú inteligente de selección de navegador.
-    Retorna: (mode, config, browser_or_none)
+    Selección simplificada de navegador.
+    Preferencia: Brave > Chrome > Edge
     """
     print("\n🌐 CONFIGURACIÓN DE NAVEGADOR")
     print("━"*50)
     
     available = get_available_browsers()
-    print(f"\n📋 Navegadores detectados: {', '.join(b.capitalize() for b in available) if available else 'ninguno'}")
+    preferred = get_preferred_browser()
     
-    # Escanear si ya hay navegador en modo debug
+    print(f"\n📋 Disponibles: {', '.join(b.capitalize() for b in available) if available else 'ninguno'}")
+    if preferred:
+        print(f"   Predeterminado: {preferred.capitalize()}")
+    
+    # 1. Verificar si ya hay navegador en modo debug
     port = scan_debug_ports()
     if port:
-        print(f"\n✅ ¡Navegador detectado en puerto {port}!")
-        print("   Intentando conectar...")
+        print(f"\n✅ Navegador detectado en puerto {port}")
         try:
             browser = playwright.chromium.connect_over_cdp(f"http://localhost:{port}")
             contexts = browser.contexts
             pages = contexts[0].pages if contexts else []
-            print(f"   ✅ Conectado! {len(pages)} pestañas encontradas")
+            print(f"   ✅ Conectado! {len(pages)} pestañas")
             return "connect", {"port": port}, browser
         except Exception as e:
-            print(f"   ⚠️ Error: {e}")
+            print(f"   ⚠️ Error conectando: {e}")
     
-    print("\n¿Cómo quieres trabajar?\n")
-    print("  [1] 🔗 Usar MI NAVEGADOR (abre nuevo con tus sesiones)")
-    print("  [2] 💾 Sesión BABAS (perfil separado, guarda sesiones)")
-    print("  [3] 🆕 Sesión TEMPORAL (se borra al cerrar)")
+    # 2. Menú simplificado
+    print("\n¿Qué navegador usar?\n")
+    if preferred:
+        print(f"  [ENTER] 🦁 {preferred.capitalize()} (recomendado)")
+    for i, name in enumerate(available, 1):
+        if name != preferred:
+            print(f"  [{i}] {name.capitalize()}")
+    print(f"  [n] 🆕 Sesión temporal (sin guardar)")
     
-    choice = input("\nOpción (1/2/3) [1]: ").strip() or "1"
+    choice = input(f"\nOpción [ENTER = {preferred.capitalize() if preferred else 'Chrome'}]: ").strip().lower()
     
-    if choice == "1":
-        # Usar navegador del usuario
-        print("\n¿Cuál navegador quieres usar?\n")
-        for i, name in enumerate(available, 1):
-            # Verificar si está en uso
-            browsers = get_browser_info()
-            info = browsers.get(name, {})
-            profile = info.get("profile", "")
-            in_use = is_profile_locked(profile) if profile else False
-            status = " (abierto)" if in_use else ""
-            print(f"  [{i}] {name.capitalize()}{status}")
-        
-        if not available:
-            print("  ❌ No se encontraron navegadores")
-            return "saved", {}, None
-        
-        browser_choice = input(f"\nNavegador (1-{len(available)}) [1]: ").strip() or "1"
-        try:
-            idx = int(browser_choice) - 1
-            browser_name = available[idx] if 0 <= idx < len(available) else available[0]
-        except:
-            browser_name = available[0]
-        
-        # Verificar si el navegador seleccionado está en uso
-        browsers = get_browser_info()
-        info = browsers.get(browser_name, {})
-        profile = info.get("profile", "")
-        
-        if profile and is_profile_locked(profile):
-            print(f"\n⚠️ {browser_name.capitalize()} está abierto con tu perfil.")
-            print("\n   Opciones:")
-            print("   [1] Usar perfil BABAS (separado, guarda sesiones)")
-            print(f"   [2] Cerrar {browser_name.capitalize()} y usar mi perfil real")
-            
-            sub_choice = input("\n   Opción (1/2) [1]: ").strip() or "1"
-            
-            if sub_choice == "2":
-                print(f"\n   Por favor cierra {browser_name.capitalize()} y presiona ENTER...")
-                input()
-                # Verificar de nuevo
-                if is_profile_locked(profile):
-                    print(f"   ⚠️ {browser_name.capitalize()} sigue abierto. Usando perfil BABAS.")
-        
-        print(f"\n🚀 Lanzando {browser_name.capitalize()}...")
-        
-        # Intentar lanzar el navegador
-        success, port, msg = launch_browser_with_debug(browser_name, use_real_profile=True)
-        
-        if not success:
-            print(f"   ❌ Error: {msg}")
-            print("   Probando con perfil separado...")
-            success, port, msg = launch_browser_with_debug(browser_name, use_real_profile=False)
-        
-        if success:
-            print(f"   ⏳ Conectando al puerto {port}...")
-            
-            # Esperar más tiempo con mejor feedback
-            for i in range(30):  # 15 segundos
-                time.sleep(0.5)
-                if check_port(port):
-                    # Pequeña pausa adicional para que el navegador esté listo
-                    time.sleep(1)
-                    try:
-                        browser = playwright.chromium.connect_over_cdp(f"http://localhost:{port}")
-                        contexts = browser.contexts
-                        pages_count = len(contexts[0].pages) if contexts else 0
-                        print(f"   ✅ ¡Conectado! ({pages_count} pestañas)")
-                        return "connect", {"port": port, "browser": browser_name}, browser
-                    except Exception as e:
-                        if i > 20:  # Solo mostrar después de varios intentos
-                            print(f"   ⏳ Reintentando conexión...")
-                        continue
-            
-            print("   ❌ No se pudo conectar al navegador.")
-            print("   💡 TIP: Puede que tu antivirus esté bloqueando la conexión.")
-        
-        return "saved", {}, None
-    
-    elif choice == "3":
+    # Sesión temporal
+    if choice == "n":
         return "new", {}, None
     
-    # Default: sesión BABAS guardada
+    # Determinar navegador a usar
+    if choice == "" and preferred:
+        browser_name = preferred
+    else:
+        try:
+            idx = int(choice) - 1
+            browser_name = available[idx] if 0 <= idx < len(available) else preferred or "chrome"
+        except:
+            browser_name = preferred or "chrome"
+    
+    # 3. Intentar lanzar el navegador preferido
+    success, browser, port = try_launch_and_connect(playwright, browser_name)
+    
+    if success:
+        return "connect", {"port": port, "browser": browser_name}, browser
+    
+    # 4. Fallback: probar otros navegadores
+    for fallback in available:
+        if fallback != browser_name:
+            print(f"\n🔄 Intentando con {fallback.capitalize()}...")
+            success, browser, port = try_launch_and_connect(playwright, fallback)
+            if success:
+                return "connect", {"port": port, "browser": fallback}, browser
+    
+    # 5. Último recurso: usar Playwright directamente
+    print("\n⚠️ No se pudo conectar a ningún navegador.")
+    print("   Usando navegador integrado de Playwright...")
     return "saved", {}, None
 
 def show_help():
