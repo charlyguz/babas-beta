@@ -1,57 +1,18 @@
 import { describe, expect, it } from 'vitest';
+import cases from '../../../tests/fixtures/pii_cases.json';
 import { detectPii, maskValue, type PiiKind } from './pii';
 
-const POSITIVE: Array<[PiiKind, string]> = [
-  ['curp', 'GOMA800101HJCRRN09'],
-  ['curp', 'goma800101hjcrrn09'],
-  ['curp', 'Mi CURP es GOMA800101MJCRRN05.'],
-  ['curp', 'LOPE900215XDFPRS08'],
-  ['rfc', 'GOMA800101AB1'],
-  ['rfc', 'GOMA800101'],
-  ['rfc', 'ABC800101XY2'],
-  ['rfc', 'mi rfc: gama800101ab1'],
-  ['rfc', 'ÑAÑA800101AB1'],
-  ['nss', '12345678901'],
-  ['nss', '12 34 56 7890 1'],
-  ['nss', '12-34-56-7890-1'],
-  ['nss', 'NSS: 48-12-90-3321-7'],
-  ['email', 'ana@example.com'],
-  ['email', 'ANA.GOMEZ+tramites@correo.com.mx'],
-  ['email', 'escribame a ana_g@example.org por favor'],
-  ['phone', '3312345678'],
-  ['phone', '55 1234 5678'],
-  ['phone', '55-1234-5678'],
-  ['phone', '(33) 1234-5678'],
-  ['phone', '+52 55 1234 5678'],
-  ['phone', '+52 1 55 1234 5678'],
-  ['phone', 'llame al 331 234 5678'],
-  ['card', '4111111111111111'],
-  ['card', '4111 1111 1111 1111'],
-  ['card', '4111-1111-1111-1111'],
-  ['card', '5555 5555 5555 4444'],
-  ['card', '378282246310005'],
-  ['card', 'mi tarjeta es 4012 8888 8888 1881 gracias'],
-];
+const POSITIVE: Array<[PiiKind, string]> = Object.entries(cases.positive).flatMap(([kind, values]) =>
+  values.map((value): [PiiKind, string] => [kind as PiiKind, value]),
+);
 
-const NEGATIVE: string[] = [
-  '',
-  '2026-10-11',
-  '11/10/2026',
-  'recetas de pozole',
-  'cómo sacar mi acta de nacimiento',
-  '123456789',
-  '12345',
-  '$1,234.50',
-  '1234.50',
-  'Hotel Plaza, Calle 5 de Mayo 123',
-  'Copyright 2026',
-  'Vuelo AM1234',
-  'ana arroba example punto com',
-  'ana@',
-  '@example.com',
-];
+const NEGATIVE: string[] = cases.negative;
 
 describe('detectPii', () => {
+  it('has shared vectors for every kind', () => {
+    expect(Object.keys(cases.positive).sort()).toEqual(['card', 'curp', 'email', 'nss', 'phone', 'rfc']);
+  });
+
   it.each(POSITIVE)('detects %s in %j', (kind, value) => {
     expect(detectPii(value)).toContain(kind);
   });

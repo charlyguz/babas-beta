@@ -1,0 +1,73 @@
+{
+  "positive": {
+    "curp": [
+      "GOMC800101HDFRRL09",
+      "gomc800101hdfrrl09",
+      "Mi CURP es GOMC800101HDFRRL09.",
+      "GOMA800101HJCRRN09",
+      "goma800101hjcrrn09",
+      "Mi CURP es GOMA800101MJCRRN05.",
+      "LOPE900215XDFPRS08"
+    ],
+    "rfc": [
+      "GOMC800101AB1",
+      "ABC800101XY2",
+      "GOMC800101",
+      "GOMA800101AB1",
+      "GOMA800101",
+      "mi rfc: gama800101ab1",
+      "ÑAÑA800101AB1"
+    ],
+    "nss": [
+      "12345678901",
+      "12-34-56-7890-1",
+      "12 34 56 7890 1",
+      "NSS: 48-12-90-3321-7"
+    ],
+    "email": [
+      "ana@example.com",
+      "juan.perez+imss@correo.gob.mx",
+      "ANA.GOMEZ+tramites@correo.com.mx",
+      "escribame a ana_g@example.org por favor"
+    ],
+    "phone": [
+      "5512345678",
+      "55 1234 5678",
+      "(55) 1234-5678",
+      "+52 55 1234 5678",
+      "+52 1 999 123 4567",
+      "3312345678",
+      "55-1234-5678",
+      "(33) 1234-5678",
+      "+52 1 55 1234 5678",
+      "llame al 331 234 5678"
+    ],
+    "card": [
+      "4111 1111 1111 1111",
+      "4111-1111-1111-1111",
+      "4111111111111111",
+      "5555 5555 5555 4444",
+      "378282246310005",
+      "mi tarjeta es 4012 8888 8888 1881 gracias"
+    ]
+  },
+  "negative": [
+    "recetas de pozole",
+    "2026-10-11",
+    "123456789",
+    "Juan Pérez",
+    "ABC12345",
+    "$1,234.50",
+    "",
+    "11/10/2026",
+    "cómo sacar mi acta de nacimiento",
+    "12345",
+    "1234.50",
+    "Hotel Plaza, Calle 5 de Mayo 123",
+    "Copyright 2026",
+    "Vuelo AM1234",
+    "ana arroba example punto com",
+    "ana@",
+    "@example.com"
+  ]
+}

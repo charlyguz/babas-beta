@@ -1,7 +1,7 @@
 import base64
 import binascii
 import logging
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import ValidationError
 
@@ -26,6 +26,25 @@ MAIN_TAB = "main"
 
 def _target_payload(target: Target) -> Dict[str, Any]:
     return target.model_dump(exclude_none=True)
+
+
+def act_payload(
+    op: str,
+    target: Optional[Union[Target, Dict[str, Any]]] = None,
+    *,
+    text: Optional[str] = None,
+    key: Optional[str] = None,
+    value: Optional[str] = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    body: Dict[str, Any] = {"op": op}
+    if target is not None:
+        body["target"] = _target_payload(target) if isinstance(target, Target) else dict(target)
+    for name, item in (("text", text), ("key", key), ("value", value)):
+        if item is not None:
+            body[name] = item
+    body.update({name: item for name, item in extra.items() if item is not None})
+    return body
 
 
 def _field(payload: Dict[str, Any], key: str, kind: type) -> Any:
@@ -80,33 +99,40 @@ class ExtensionDriver(BrowserDriver):
         payload = await self.bridge.request("page.exists", {"target": _target_payload(target)}, timeout=DEFAULT_TIMEOUT)
         return payload.get("visible") is True
 
-    async def _act(self, op: str, confirmation: Optional[str] = None, **fields: Any) -> Dict[str, Any]:
-        body: Dict[str, Any] = {"op": op}
-        body.update({key: value for key, value in fields.items() if value is not None})
-        if confirmation:
-            body["confirmation_id"] = confirmation
+    async def _act(
+        self,
+        op: str,
+        target: Optional[Target] = None,
+        *,
+        confirmation: Optional[str] = None,
+        text: Optional[str] = None,
+        key: Optional[str] = None,
+        value: Optional[str] = None,
+        **extra: Any,
+    ) -> Dict[str, Any]:
+        body = act_payload(op, target, text=text, key=key, value=value, confirmation_id=confirmation or None, **extra)
         payload = await self.bridge.request("page.act", body, timeout=DEFAULT_TIMEOUT)
         result = payload.get("result")
         return result if isinstance(result, dict) else {}
 
     async def click(self, target: Target, *, confirmation: Optional[str] = None) -> None:
-        await self._act("click", confirmation, target=_target_payload(target))
+        await self._act("click", target, confirmation=confirmation)
 
     async def type_text(self, target: Target, text: str, *, confirmation: Optional[str] = None) -> None:
-        await self._act("type", confirmation, target=_target_payload(target), text=text)
+        await self._act("type", target, confirmation=confirmation, text=text)
 
     async def press_key(self, key: str, target: Optional[Target] = None, *, confirmation: Optional[str] = None) -> None:
-        await self._act("press", confirmation, key=key, target=_target_payload(target) if target is not None else None)
+        await self._act("press", target, confirmation=confirmation, key=key)
 
     async def select_option(self, target: Target, value: str, *, confirmation: Optional[str] = None) -> str:
-        result = await self._act("select", confirmation, target=_target_payload(target), value=value)
+        result = await self._act("select", target, confirmation=confirmation, value=value)
         return _field(result, "selected", str)
 
     async def scroll(self, direction: ScrollDirection = "down", amount: int = 500) -> None:
         await self._act("scroll", direction=direction, amount=amount)
 
     async def read_text(self, target: Optional[Target] = None) -> str:
-        result = await self._act("read", target=_target_payload(target) if target is not None else None)
+        result = await self._act("read", target)
         return _field(result, "text", str)
 
     async def screenshot(self) -> bytes:
