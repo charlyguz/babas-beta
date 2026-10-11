@@ -39,22 +39,29 @@ brain, and expose it over MCP. The roadmap is `docs/PLAN.md`.
 ## Status
 | Phase | Scope | State |
 |---|---|---|
-| P1 | `babas/` package, async `BrowserDriver`, WebSocket bridge, minimal extension, tests, CI | in progress (scaffold d61fb9b; next step P1.0) |
-| P2 | All actions, side panel, safety gate and confirmations, observe → act agent | not started |
+| P1 | `babas/` package, async `BrowserDriver`, WebSocket bridge, minimal extension, tests, CI | done (see "As built" in `docs/tasks/P1.md`) |
+| P2 | All actions, side panel, safety gate and confirmations, observe → act agent | not started (next: `docs/tasks/P2.md`) |
 | P3 | OpenAI-compatible provider config, logging, MCP server | not started |
 | P4 | Spanish assistant prompt, 2 real flows, README + GIF, MIT license | not started |
 
 ## Layout (now)
 | Path | Responsibility |
 |---|---|
-| `babas.py` | **Legacy** CLI monolith: Playwright sync API, planner, 21 actions, recovery loop, browser launch/CDP, REPL. Split into `babas/` in P1.2, then deleted |
-| `babas_voice.py` / `babas_listen.py` / `babas_gui.py` | Optional ElevenLabs "butler" TTS / mic + Whisper (`language="en"`) / customtkinter control panel (CLI only) |
-| `babas/__init__.py` | `__version__` |
+| `babas_voice.py` / `babas_listen.py` / `babas_gui.py` | Optional ElevenLabs "butler" TTS / mic + Whisper (`language="en"`) / customtkinter control panel (CLI only). Loaded lazily through `babas/voice.py` |
+| `babas/__main__.py` | `python -m babas [cli\|serve]` (argparse; no subcommand = `cli`) |
+| `babas/cli.py` | Console agent (legacy REPL ported to asyncio): browser/session selection, voice mode, hacker easter egg, private `_ainput` |
+| `babas/agent.py` | Legacy plan-once agent: lazy `get_client()`, `create_plan`, `create_recovery_plan`, `run_plan_with_recovery` (replaced by the observe → act `Agent` in P2.7) |
+| `babas/actions.py` | `ActionRegistry` + `ActionExecutor`: the 21 legacy actions on `PlaywrightDriver` (rewritten on driver primitives in P2.6) |
 | `babas/schemas.py` | Action schemas: still the flat `Step`/`Plan` (P2.1 makes them a discriminated union) |
 | `babas/prompts/__init__.py` | Legacy `SYSTEM_PROMPT`/`RECOVERY_PROMPT` (replaced by builders in P2.7) |
+| `babas/voice.py` | Lazy loaders for the optional voice modules (importing it prints nothing) |
+| `babas/debug.py` | Temp debug dir and async error screenshots |
+| `babas/devrepl.py` | `serve` (bridge + connection status) and the developer REPL (`ls`, `click N`, `type N text`, `help`) |
 | `babas/drivers/base.py` | `BrowserDriver` ABC, `Target`, `Element`, `PageState`, `DriverError`, `ErrorCode`, flag names |
-| `babas/drivers/page_script.js` | **Generated** bundle of `extension/src/page` for `PlaywrightDriver` (`window.__babas.handle`) |
-| `babas/bridge/protocol.py` | Bridge envelope models, `PROTOCOL_VERSION`, `DEFAULT_PORT`, `PINNED_EXTENSION_ID` |
+| `babas/drivers/playwright_driver.py` | `PlaywrightDriver` (`page_script.js` for snapshots, native Playwright input), `PageAnalyzer`, browser discovery/launch/CDP helpers |
+| `babas/drivers/extension_driver.py` | `ExtensionDriver`: every method is one bridge request (`docs/PROTOCOL.md` §1) |
+| `babas/drivers/page_script.js` | **Generated** bundle of `extension/src/page` (`window.__babas.handle`); never edit by hand |
+| `babas/bridge/protocol.py` | Envelope models, `PROTOCOL_VERSION`, `DEFAULT_PORT`, `PINNED_EXTENSION_ID` |
 | `babas/bridge/server.py` | `BridgeServer`: WebSocket on 127.0.0.1, Origin pinning, hello/welcome, request→result futures, events |
 | `extension/public/manifest.json` | MV3 manifest; its `key` pins the ID `ooflejhodolbaphddedikkpleeephhmp` |
 | `extension/src/shared/protocol.ts` | TS mirror of the protocol: types, `BabasError`, guards |
@@ -62,6 +69,8 @@ brain, and expose it over MCP. The roadmap is `docs/PLAN.md`.
 | `extension/src/content/main.ts` | Content script: `{babas: PageCommand}` runtime messages → `handle()` |
 | `extension/src/background/` | SW: `bridge.ts` (WS client, keepalive, reconnect), `tabs.ts` (inject, settle, navigate), `service-worker.ts` (request handlers) |
 | `extension/scripts/make_icons.py` | Regenerates `public/icons/*.png` |
+| `tests/` | `conftest.py` (fixtures `pages_url`, `pw`, `playwright_driver`, `ext_env`, `extension_driver`, `driver`), `test_protocol.py`, `test_bridge.py`, `e2e/test_contract.py` (both drivers), `e2e/test_reconnect.py`, `fixtures/{pages,protocol}` |
+| `.github/workflows/ci.yml` | CI: extension typecheck/test/build, `page_script.js` freshness, `pytest -q` |
 | `docs/` | `PLAN.md`, `PROTOCOL.md`, `SAFETY.md`, `tasks/P1-P4.md` |
 
 `extension/src/page/` files:
@@ -71,15 +80,12 @@ brain, and expose it over MCP. The roadmap is `docs/PLAN.md`.
 - `actions.ts`: click, type, press, select, scroll, read, idle, mark.
 - `highlight.ts`: overlay.
 - `handle.ts`: dispatcher.
-- `dom.ts`, `text.ts`, `pii.ts`: helpers.
+- `dom.ts`, `text.ts`, `pii.ts`: helpers. `test-helpers.ts`: vitest layout stub (tests only).
 
-Planned layout after P3:
-- `babas/{voice,agent,actions,llm,safety,logs,channels,gate,session,config,mcp_server,cli,devrepl,debug,__main__}.py`
-- `babas/prompts/{__init__.py, assistant_es.md}`
-- `babas/drivers/{playwright_driver,extension_driver}.py`
+Planned for P2/P3:
+- `babas/{llm,safety,logs,channels,gate,session,config,mcp_server}.py`
+- `babas/prompts/assistant_es.md`
 - `extension/src/{sidepanel/, background/{state,policy,ui}.ts, shared/messages.ts}`, `extension/sidepanel.html`
-- `tests/` (unit + `e2e/`)
-- `.github/workflows/ci.yml`
 
 ## Environment and commands
 Cloud container (Claude Code on the web):
@@ -88,12 +94,11 @@ Cloud container (Claude Code on the web):
 - PyPI downloads are slow (~100 KB/s), so run `pip` in the background.
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -U pip
-pip install "playwright==1.56.0" && pip install -e '.[dev]'     # before P1.1 there is no pyproject: see P1.0
+pip install "playwright==1.56.0" && pip install -e '.[dev]'
 (cd extension && npm ci && npm run typecheck && npm test && npm run build)   # build also regenerates babas/drivers/page_script.js
 pytest -q                          # unit + e2e (e2e: headless Chromium; extension tests skip if extension/dist is missing)
-python babas.py                    # legacy CLI (until P1.2)
-python -m babas                    # CLI (after P1.2)
-python -m babas serve --repl       # developer console through the extension (after P1.5)
+python -m babas                    # console agent (needs OPENAI_API_KEY in .env)
+python -m babas serve --repl       # developer console through the extension (P1); load extension/dist first
 python -m babas serve              # side panel tasks (after P2); add --mcp-http in P3
 python -m babas mcp                # MCP over stdio (after P3)
 ```
@@ -160,6 +165,13 @@ Set `chrome.storage.local.bridgePort` from the service worker to point it at a t
 - In MCP stdio mode, stdout is the protocol channel: never print.
 - Ollama silently truncates long prompts unless started with `OLLAMA_CONTEXT_LENGTH` ≥16k.
 - The legacy CLI treats any input containing "hack" (including Spanish "hackear") as the hacker easter egg. It stays CLI-only.
+- Never `asyncio.to_thread(input)`: a worker blocked in `input()` hangs the process after Ctrl+C until Enter is pressed.
+  Use a daemon-thread reader (`_ainput` in `cli.py` and `devrepl.py`). Under a real tty a daemon thread blocked in
+  `input()` can also deadlock the interpreter's exit-time flush, so `cli.main()` ends with `os._exit(130)` in that case.
+- `grep sync_api` also matches `async_api`. Check with `grep -rn "playwright.sync_api\|sync_playwright" babas/`.
+- Tests set `chrome.storage.local.bridgePort` through the service worker, and the worker handle can come back before
+  `chrome.*` is bound inside it: retry briefly (`_set_bridge_port` in `tests/conftest.py`).
+- A click on a covered element is `OBSCURED` through the extension, but `TIMEOUT` after 5 s through Playwright's native actionability checks.
 - CDP mode uses a separate BABAS profile because Chrome 136+ refuses to debug the default one. That is why the extension exists.
 
 ## Decisions log
@@ -176,3 +188,8 @@ Set `chrome.storage.local.bridgePort` from the service worker to point it at a t
   - "No" ends the run.
   - MCP SDK 2.x API.
   - The pinned extension ID comes from a generated key whose private half was discarded (not needed for unpacked loading).
+- 2026-10-11 (P1 implementation):
+  - Optional voice modules load lazily (`babas/voice.py`), so importing `babas.agent`/`babas.cli` prints nothing.
+  - Console input uses a daemon-thread `_ainput`; Ctrl+C at the prompt now exits (P2.12 adds SIGINT -> cancel of the run).
+  - `ExtensionDriver.new_tab` rejects duplicate names (`BAD_REQUEST`); `PlaywrightDriver` keeps the legacy overwrite.
+  - The CI workflow and the generated `page_script.js` freshness check ship with P1.

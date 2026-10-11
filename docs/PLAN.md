@@ -12,7 +12,7 @@ interfaces, verification commands and commit points. The specs are `docs/PROTOCO
 ## Status
 | Phase | State | Notes |
 |---|---|---|
-| P1 | in progress | Scaffold committed in d61fb9b (extension page module, SW bridge, Python bridge + driver ABC). Next: P1.0 |
+| P1 | done (pending first CI run) | Package split, `PlaywrightDriver`, `ExtensionDriver`, bridge, `serve --repl`, 169 vitest + 79 pytest tests, CI workflow. See "As built" in `docs/tasks/P1.md`. Next: P2 |
 | P2 | not started | |
 | P3 | not started | |
 | P4 | not started | Live flows need the user (P4.7) |
