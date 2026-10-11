@@ -12,7 +12,7 @@ interfaces, verification commands and commit points. The specs are `docs/PROTOCO
 ## Status
 | Phase | State | Notes |
 |---|---|---|
-| P1 | done (pending first CI run) | Package split, `PlaywrightDriver`, `ExtensionDriver`, bridge, `serve --repl`, 169 vitest + 79 pytest tests, CI workflow. See "As built" in `docs/tasks/P1.md`. Next: P2 |
+| P1 | done | Package split, `PlaywrightDriver`, `ExtensionDriver`, bridge, `serve --repl`, 169 vitest + 79 pytest tests, CI workflow (green on `dcac297`). See "As built" in `docs/tasks/P1.md`. Not done: independent code review of P1 (started, then stopped). Next: P2 |
 | P2 | not started | |
 | P3 | not started | |
 | P4 | not started | Live flows need the user (P4.7) |
