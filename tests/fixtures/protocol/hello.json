@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "id": "7f0b1c2d3e4f405a8b9c0d1e2f3a4b5c",
+  "type": "hello",
+  "payload": {
+    "ext_version": "0.2.0",
+    "protocol": 1
+  }
+}

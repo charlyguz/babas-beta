@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "id": "11112222333344445555666677778888",
+  "type": "page.state",
+  "payload": {
+    "highlight": false,
+    "max_elements": 250,
+    "max_text": 2000
+  }
+}
