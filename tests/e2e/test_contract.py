@@ -3,7 +3,12 @@ from typing import List, Optional
 
 import pytest
 
+from babas.actions import ActionExecutor
 from babas.drivers.base import DriverError, Element, ErrorCode, PageState, Target
+from babas.gate import SafeDriver
+from babas.safety import SafetyPolicy
+from babas.schemas import ACTION_MODELS
+from helpers import RecordingChannel
 
 pytestmark = pytest.mark.e2e
 
@@ -246,3 +251,68 @@ async def test_extension_requires_confirmation_for_submit(extension_driver, page
     reasons = gated.value.data.get("reasons", [])
     assert "submit_form" in reasons
     assert "Enviado" not in await extension_driver.read_text()
+
+
+def gated_executor(driver):
+    channel = RecordingChannel(approve=True)
+    gate = SafeDriver(driver, SafetyPolicy(["127.0.0.1"]), channel)
+    return ActionExecutor(gate), gate, channel
+
+
+def act(name: str, **data):
+    return ACTION_MODELS[name].model_validate({"action": name, **data})
+
+
+async def test_executor_smart_search_fills_the_search_form(driver, pages_url):
+    executor, gate, channel = gated_executor(driver)
+    await gate.goto(f"{pages_url}/form.html")
+    state = await gate.get_page_state()
+
+    outcome = await executor.execute(act("smart_search", value="clima en Guadalajara"), state)
+
+    assert outcome.ok
+    after = await gate.get_page_state()
+    assert only(after, "Buscar", "textbox").value == "clima en Guadalajara"
+    assert only(after, "Nombre").value == ""
+    assert channel.confirms == []
+
+
+async def test_executor_smart_search_submits_with_enter(driver, pages_url):
+    executor, gate, channel = gated_executor(driver)
+    await gate.goto(f"{pages_url}/search.html")
+    state = await gate.get_page_state()
+
+    await executor.execute(act("smart_search", value="pozole"), state)
+
+    assert (await wait_for_url_suffix(driver, "search.html?q=pozole")).endswith("search.html?q=pozole")
+    assert "Resultados para: pozole" in await driver.read_text()
+    assert channel.confirms == []
+
+
+async def test_executor_smart_click_presses_the_button_with_that_text(driver, pages_url):
+    executor, gate, channel = gated_executor(driver)
+    await gate.goto(f"{pages_url}/form.html")
+    assert "Mensaje mostrado" not in await driver.read_text()
+
+    outcome = await executor.execute(act("smart_click", value="Mostrar mensaje"), None)
+
+    assert outcome.ok
+    text = await driver.read_text()
+    assert "Mensaje mostrado" in text
+    assert "Clics: 1" in text
+    assert channel.confirms == []
+
+
+@pytest.mark.parametrize("by", ["index", "text"])
+async def test_executor_select_option_chooses_the_option(driver, pages_url, by):
+    executor, gate, channel = gated_executor(driver)
+    await gate.goto(f"{pages_url}/form.html")
+    state = await gate.get_page_state()
+    estado = only(state, "Estado")
+    where = {"index": estado.index} if by == "index" else {"text": "Estado"}
+
+    outcome = await executor.execute(act("select_option", value="jalisco", **where), state)
+
+    assert outcome.ok and outcome.detail == "Jalisco"
+    assert only(await gate.get_page_state(), "Estado").value == "Jalisco"
+    assert channel.confirms == []
