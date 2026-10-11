@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Formulario de prueba</title>
+<style>
+  body { font-family: sans-serif; margin: 16px; }
+  .field { margin: 8px 0; }
+  label { display: inline-block; min-width: 110px; }
+  #spacer { height: 2000px; }
+</style>
+</head>
+<body>
+<h1 id="top">Solicitud de servicio</h1>
+
+<form role="search" action="#buscar" onsubmit="event.preventDefault()">
+  <input type="text" name="q" placeholder="Buscar">
+  <button type="submit">Buscar</button>
+</form>
+
+<p><a href="#ayuda">Ayuda</a></p>
+
+<form id="contact" action="#contact" novalidate>
+  <div class="field"><label for="nombre">Nombre</label><input type="text" id="nombre" name="nombre"></div>
+  <div class="field"><label for="correo">Correo</label><input type="email" id="correo" name="correo"></div>
+  <div class="field"><label for="telefono">Teléfono</label><input type="tel" id="telefono" name="telefono"></div>
+  <div class="field"><label for="curp">CURP</label><input type="text" id="curp" name="curp"></div>
+  <div class="field">
+    <label for="estado">Estado</label>
+    <select id="estado" name="estado">
+      <option value="aguascalientes">Aguascalientes</option>
+      <option value="jalisco">Jalisco</option>
+      <option value="yucatan">Yucatán</option>
+    </select>
+  </div>
+  <div class="field"><input type="checkbox" id="acepto" name="acepto"><label for="acepto">Acepto</label></div>
+  <div class="field"><label for="comentarios">Comentarios</label><textarea id="comentarios" name="comentarios" rows="2" cols="30"></textarea></div>
+  <button type="submit">Enviar solicitud</button>
+</form>
+<p id="result"></p>
+
+<p>
+  <button id="show" type="button">Mostrar mensaje</button>
+  <span id="out"></span>
+</p>
+<p>Clics: <span id="clics">0</span></p>
+
+<p id="ayuda">Si necesita ayuda, acuda a su oficina local.</p>
+
+<div id="spacer"></div>
+<a href="#top">Volver arriba</a>
+
+<script>
+  document.getElementById('contact').addEventListener('submit', function (event) {
+    event.preventDefault();
+    document.getElementById('result').textContent = 'Enviado: ' + document.getElementById('nombre').value;
+  });
+  var clics = 0;
+  document.getElementById('show').addEventListener('click', function () {
+    clics += 1;
+    document.getElementById('out').textContent = 'Mensaje mostrado';
+    document.getElementById('clics').textContent = String(clics);
+  });
+</script>
+</body>
+</html>
