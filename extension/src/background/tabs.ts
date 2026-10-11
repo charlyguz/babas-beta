@@ -65,16 +65,21 @@ export async function ensureInjected(tabId: number): Promise<void> {
   }
 }
 
-export async function pageCommand(tabId: number, cmd: PageCommand, timeoutMs = 15_000): Promise<unknown> {
+// Runs after the page has loaded and just before the command is sent, so the checks see the page that will receive it.
+export type PrepareCommand = (tab: chrome.tabs.Tab) => Promise<PageCommand | void>;
+
+export async function pageCommand(tabId: number, cmd: PageCommand, timeoutMs = 15_000, prepare?: PrepareCommand): Promise<unknown> {
   await waitForComplete(tabId, 30_000);
   await ensureInjected(tabId);
+  let toSend = cmd;
+  if (prepare) toSend = (await prepare(await getTab(tabId))) ?? cmd;
   let response: PageResponse | undefined;
   try {
-    response = await withTimeout(sendRaw(tabId, cmd), timeoutMs, `Page operation "${cmd.op}"`);
+    response = await withTimeout(sendRaw(tabId, toSend), timeoutMs, `Page operation "${toSend.op}"`);
   } catch (err) {
     if (err instanceof BabasError) throw err;
     const message = err instanceof Error ? err.message : String(err);
-    if (/message port closed|receiving end does not exist|back\/forward cache/i.test(message) && ['click', 'press', 'select'].includes(cmd.op)) {
+    if (/message port closed|receiving end does not exist|back\/forward cache/i.test(message) && ['click', 'press', 'select'].includes(toSend.op)) {
       return { navigated: true };
     }
     throw new BabasError('INTERNAL', `Page did not answer: ${message}`);
@@ -82,6 +87,14 @@ export async function pageCommand(tabId: number, cmd: PageCommand, timeoutMs = 1
   if (!response) throw new BabasError('INTERNAL', 'Page did not answer');
   if (!response.ok) throw new BabasError(response.error.code, response.error.message, response.error.data);
   return response.result;
+}
+
+export async function clearHighlights(tabId: number): Promise<void> {
+  try {
+    await withTimeout(sendRaw(tabId, { op: 'highlight', mode: 'off' }), 1500, 'Clearing highlights');
+  } catch {
+    // best effort: the tab may have no content script or may be gone
+  }
 }
 
 export async function settle(tabId: number): Promise<void> {

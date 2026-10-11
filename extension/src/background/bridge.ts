@@ -11,6 +11,7 @@ import {
 
 export type RequestHandler = (payload: Record<string, unknown>) => Promise<Record<string, unknown> | void>;
 type StatusListener = (connected: boolean) => void;
+type WelcomeListener = (payload: Record<string, unknown>) => void;
 
 const KEEPALIVE_MS = 20_000;
 const MIN_BACKOFF_MS = 500;
@@ -29,6 +30,7 @@ export class Bridge {
   private backoff = MIN_BACKOFF_MS;
   private handlers = new Map<string, RequestHandler>();
   private statusListeners = new Set<StatusListener>();
+  private welcomeListeners = new Set<WelcomeListener>();
   private helloExtras: () => Promise<Record<string, unknown>> = async () => ({});
   connected = false;
   serverVersion = '';
@@ -39,6 +41,10 @@ export class Bridge {
 
   onStatus(listener: StatusListener): void {
     this.statusListeners.add(listener);
+  }
+
+  onWelcome(listener: WelcomeListener): void {
+    this.welcomeListeners.add(listener);
   }
 
   setHelloExtras(fn: () => Promise<Record<string, unknown>>): void {
@@ -59,7 +65,7 @@ export class Bridge {
     this.ws = ws;
     ws.onopen = async () => {
       this.backoff = MIN_BACKOFF_MS;
-      const extras = await this.helloExtras();
+      const extras = await this.helloExtras().catch(() => ({}));
       this.send({
         v: PROTOCOL_VERSION,
         id: newId(),
@@ -124,6 +130,13 @@ export class Bridge {
     if (!isEnvelope(message)) return;
     if (message.type === 'welcome') {
       this.serverVersion = String(message.payload?.server_version ?? '');
+      for (const listener of this.welcomeListeners) {
+        try {
+          listener(message.payload ?? {});
+        } catch {
+          // a listener must not break the handshake
+        }
+      }
       this.setConnected(true);
       return;
     }
