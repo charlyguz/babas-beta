@@ -2,17 +2,18 @@ import asyncio
 import os
 import random
 import shutil
+import signal
 import sys
 import threading
 from datetime import datetime
-from typing import Any, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from dotenv import load_dotenv
 from playwright.async_api import Page, Playwright, async_playwright
 
 from babas import voice
-from babas.actions import ActionExecutor
-from babas.agent import create_plan, run_plan_with_recovery
+from babas.agent import Agent, RunResult
+from babas.channels import ConsoleChannel
 from babas.debug import cleanup_temp_dir, get_temp_debug_dir
 from babas.drivers.playwright_driver import (
     PlaywrightDriver,
@@ -21,6 +22,9 @@ from babas.drivers.playwright_driver import (
     scan_debug_ports,
     try_launch_and_connect,
 )
+from babas.gate import SafeDriver
+from babas.llm import OpenAIClient
+from babas.safety import SafetyPolicy, redact
 
 HACKER_PHRASES = [
     "Accessing mainframe...",
@@ -43,9 +47,13 @@ HACKER_SUCCESS_PHRASES = [
 
 
 _input_pending = threading.Event()
+_pending_read: Optional["asyncio.Future[str]"] = None
+
+STOP_POLL_S = 0.3
+MISSING_KEY_MESSAGE = "Error: OPENAI_API_KEY is not set. Put it in .env or the environment."
 
 
-async def _ainput(prompt: str = "") -> str:
+def _start_read(prompt: str) -> "asyncio.Future[str]":
     # A daemon thread, not asyncio.to_thread: a pool worker blocked in input() keeps the process alive after Ctrl+C.
     loop = asyncio.get_running_loop()
     future: "asyncio.Future[str]" = loop.create_future()
@@ -74,7 +82,29 @@ async def _ainput(prompt: str = "") -> str:
 
     _input_pending.set()
     threading.Thread(target=read, name="babas-input", daemon=True).start()
-    return await future
+    return future
+
+
+async def _ainput(prompt: str = "") -> str:
+    # A read abandoned by Ctrl+C is still blocked in input(); the next prompt must adopt it, or it would swallow the next line.
+    global _pending_read
+    pending = _pending_read
+    if pending is None or pending.get_loop() is not asyncio.get_running_loop():
+        pending = _pending_read = _start_read(prompt)
+    elif not pending.done():
+        sys.stdout.write(prompt)
+        sys.stdout.flush()
+    try:
+        line = await asyncio.shield(pending)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        if _pending_read is pending:
+            _pending_read = None
+        raise
+    if _pending_read is pending:
+        _pending_read = None
+    return line
 
 
 def _exit_if_input_pending() -> None:
@@ -179,6 +209,134 @@ async def select_session_mode(playwright: Playwright) -> Tuple[str, dict, Any]:
     return "saved", {}, None
 
 
+def _install_sigint(loop: asyncio.AbstractEventLoop, task: "asyncio.Future[Any]") -> Tuple[bool, Any]:
+    if sys.platform == "win32":
+        return False, None
+    previous = signal.getsignal(signal.SIGINT)
+    try:
+        loop.add_signal_handler(signal.SIGINT, task.cancel)
+    except (NotImplementedError, RuntimeError, ValueError):
+        return False, None
+    return True, previous
+
+
+def _remove_sigint(loop: asyncio.AbstractEventLoop, previous: Any) -> None:
+    try:
+        loop.remove_signal_handler(signal.SIGINT)
+        if previous is not None:
+            signal.signal(signal.SIGINT, previous)
+    except (NotImplementedError, RuntimeError, ValueError, OSError):
+        pass
+
+
+async def _watch_stop(voice_gui: Any, task: "asyncio.Future[Any]") -> None:
+    while not task.done():
+        await asyncio.sleep(STOP_POLL_S)
+        try:
+            requested = bool(voice_gui.is_stop_requested())
+        except Exception:
+            requested = False
+        if requested:
+            task.cancel()
+            return
+
+
+def _make_printer(voice_gui: Any) -> Callable[[str, Dict[str, Any]], Awaitable[None]]:
+    async def on_event(name: str, data: Dict[str, Any]) -> None:
+        steps = data.get("steps")
+        if name != "plan" or not isinstance(steps, list) or not steps:
+            return
+        lines = [f"Step {number}/{len(steps)}: {redact(str(summary))}" for number, summary in enumerate(steps, 1)]
+        for line in lines:
+            print(f"   {line}")
+        if voice_gui is not None:
+            voice_gui.show_message("Executing...\n(Press STOP to cancel)\n\n" + "\n".join(lines))
+
+    return on_event
+
+
+def _gui_result(voice_gui: Any, status: str, color: str, message: str) -> None:
+    if voice_gui is not None:
+        voice_gui.set_status(status, color)
+        voice_gui.show_message(f"{message}\n\nRecord another command.")
+
+
+async def _close_llm(llm: Any) -> None:
+    close = getattr(llm, "close", None)
+    if close is None:
+        return
+    try:
+        await close()
+    except Exception:
+        pass
+
+
+async def run_task(
+    driver: PlaywrightDriver,
+    policy: SafetyPolicy,
+    text: str,
+    voice_gui: Any = None,
+    butler: Any = None,
+) -> Optional[RunResult]:
+    if not os.environ.get("OPENAI_API_KEY"):
+        print(MISSING_KEY_MESSAGE)
+        _gui_result(voice_gui, "Error", "#ff4757", MISSING_KEY_MESSAGE)
+        return None
+    channel = ConsoleChannel(voice_gui, ainput=_ainput)
+    llm = OpenAIClient()
+    agent = Agent(SafeDriver(driver, policy, channel), llm, channel, language="en", on_event=_make_printer(voice_gui))
+    if voice_gui is not None:
+        voice_gui.set_status("Executing...", "#ff9f43")
+        voice_gui.show_message(f'Executing...\n(Press STOP to cancel)\n\n"{redact(text)[:50]}"')
+        voice_gui.start_execution()
+    if butler and butler.enabled:
+        butler.executing()
+    loop = asyncio.get_running_loop()
+    task = asyncio.ensure_future(agent.run(text))
+    watcher = asyncio.ensure_future(_watch_stop(voice_gui, task)) if voice_gui is not None else None
+    handled, previous = _install_sigint(loop, task)
+    try:
+        await asyncio.wait({task})
+    except asyncio.CancelledError:
+        task.cancel()
+        await asyncio.wait({task})
+        raise
+    finally:
+        if handled:
+            _remove_sigint(loop, previous)
+        if watcher is not None:
+            watcher.cancel()
+        if voice_gui is not None:
+            voice_gui.end_execution()
+            voice_gui.clear_stop()
+        await _close_llm(llm)
+    if task.cancelled():
+        print("\nStopped")
+        _gui_result(voice_gui, "Stopped", "#ff9f43", "Stopped.")
+        if butler and butler.enabled:
+            butler.say("Understood sir. Stopping execution.")
+        return None
+    result = task.result()
+    answer = redact(result.answer)
+    if result.status == "done":
+        print("\nDone!")
+        _gui_result(voice_gui, "Complete", "#00ff88", answer or "Complete!")
+        if butler and butler.enabled:
+            butler.success()
+    elif result.status == "stopped":
+        print("\nStopped")
+        _gui_result(voice_gui, "Stopped", "#ff9f43", answer or "Stopped.")
+    elif result.status == "failed":
+        print("\nCould not complete the task")
+        _gui_result(voice_gui, "Error", "#ff4757", answer or "Could not complete the task.")
+        if butler and butler.enabled:
+            butler.say("I'm very sorry sir. I couldn't complete this task despite my attempts. Ready for your next command.")
+    else:
+        print("\nPartially completed")
+        _gui_result(voice_gui, "Stopped", "#ff9f43", answer or "Step limit reached.")
+    return result
+
+
 def show_help() -> None:
     print("\nCOMMANDS:")
     print("   exit, quit, q    -> Close program")
@@ -278,7 +436,7 @@ async def amain() -> None:
                     initial_page = await context.new_page()
             driver = PlaywrightDriver(context, initial_page, attached=is_connected, browser=browser)
             await driver.start()
-            executor = ActionExecutor(driver)
+            policy = SafetyPolicy.from_env()
             print("\n" + "="*60)
             print("READY!")
             print("="*60)
@@ -328,7 +486,7 @@ async def amain() -> None:
                         print("\nTabs:")
                         for name in driver.list_tabs():
                             page = driver.get_tab_page(name)
-                            marker = "->" if name == executor.current_tab_name else "  "
+                            marker = "->" if name == driver.current_tab else "  "
                             try:
                                 title = (await page.title())[:40] or page.url[:40]
                                 print(f"   {marker} [{name}] {title}")
@@ -359,66 +517,12 @@ async def amain() -> None:
                             voice_gui.show_message("Hack complete\n\nRecord another command.")
                         continue
                     print()
+                    gui = voice_gui if (use_voice_mode and voice_gui and voice_gui.is_open) else None
                     try:
-                        if use_voice_mode and voice_gui and voice_gui.is_open:
-                            voice_gui.set_status("Creating plan...", "#00d4ff")
-                        plan = await create_plan(user_input)
-                        plan_lines = []
-                        for i, step in enumerate(plan.steps, 1):
-                            details = step.value or step.selector or step.tab_name or ""
-                            if details:
-                                details = f" -> {details[:35]}"
-                            plan_lines.append(f"{i}. {step.action}{details}")
-                        plan_text = "\n".join(plan_lines)
-                        print("\nPlan:")
-                        for line in plan_lines:
-                            print(f"   {line}")
-                        confirmed = False
-                        if use_voice_mode and voice_gui and voice_gui.is_open:
-                            confirm_result = await asyncio.to_thread(
-                                voice_gui.show_plan_and_confirm,
-                                f"Plan for:\n\"{user_input[:50]}\"\n\n" + plan_text,
-                                timeout=120
-                            )
-                            confirmed = confirm_result == True
-                            if not confirmed:
-                                print("Cancelled from GUI")
-                                voice_gui.show_message("Cancelled.\n\nRecord another command.")
-                                continue
-                        else:
-                            confirm = (await _ainput("\nExecute? (y/n) [y]: ")).strip().lower()
-                            if confirm == 'n':
-                                print("Cancelled")
-                                continue
-                            confirmed = True
-                        if not confirmed:
-                            continue
-                        if use_voice_mode and voice_gui and voice_gui.is_open:
-                            voice_gui.set_status("Executing...", "#ff9f43")
-                            voice_gui.show_message("Executing...\n(Press STOP to cancel)\n\n" + plan_text)
-                            voice_gui.start_execution()
-                        try:
-                            gui_for_stop = voice_gui if (use_voice_mode and voice_gui and voice_gui.is_open) else None
-                            success = await run_plan_with_recovery(executor, plan, user_input, voice_gui=gui_for_stop)
-                        finally:
-                            if use_voice_mode and voice_gui and voice_gui.is_open:
-                                voice_gui.end_execution()
-                                voice_gui.clear_stop()
-                        if success:
-                            print("\nDone!")
-                            if use_voice_mode and voice_gui and voice_gui.is_open:
-                                voice_gui.set_status("Complete", "#00ff88")
-                                voice_gui.show_message("Complete!\n\nRecord another command.")
-                        else:
-                            if use_voice_mode and voice_gui and voice_gui.is_open:
-                                voice_gui.set_status("Stopped", "#ff9f43")
-                            else:
-                                print("\nPartially completed")
+                        await run_task(driver, policy, user_input, gui, butler)
                     except Exception as e:
-                        print(f"\nError: {e}")
-                        if use_voice_mode and voice_gui and voice_gui.is_open:
-                            voice_gui.set_status("Error", "#ff4757")
-                            voice_gui.show_message(f"Error: {e}\n\nRecord another command.")
+                        print(f"\nError: {redact(str(e))}")
+                        _gui_result(gui, "Error", "#ff4757", f"Error: {redact(str(e))}")
                         continue
                 except KeyboardInterrupt:
                     print("\n\n(Ctrl+C - type 'exit' to close)")

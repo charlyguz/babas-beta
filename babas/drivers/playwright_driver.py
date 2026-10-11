@@ -89,85 +89,6 @@ class _Located(NamedTuple):
     mark: Optional[str]
 
 
-class PageAnalyzer:
-    @staticmethod
-    async def get_interactive_elements(page: Page, max_per_type: int = 15) -> Dict:
-        elements = {"inputs": [], "buttons": [], "links": [], "search_boxes": []}
-        try:
-            for inp in (await page.locator("input:visible, textarea:visible").all())[:max_per_type]:
-                try:
-                    info = {
-                        "type": await inp.get_attribute("type") or "text",
-                        "name": await inp.get_attribute("name"),
-                        "id": await inp.get_attribute("id"),
-                        "placeholder": await inp.get_attribute("placeholder"),
-                        "aria-label": await inp.get_attribute("aria-label"),
-                        "class": await inp.get_attribute("class"),
-                    }
-                    if info["id"]:
-                        info["selector"] = f"#{info['id']}"
-                    elif info["name"]:
-                        info["selector"] = f"input[name='{info['name']}']"
-                    elif info["placeholder"]:
-                        info["selector"] = f"input[placeholder='{info['placeholder']}']"
-                    elif info["aria-label"]:
-                        info["selector"] = f"input[aria-label='{info['aria-label']}']"
-                    else:
-                        info["selector"] = None
-                    elements["inputs"].append({k: v for k, v in info.items() if v})
-                except Exception:
-                    continue
-            search_selectors = [
-                "input[type='search']", "input[name*='search']", "input[name*='query']",
-                "input[placeholder*='Search']", "input[placeholder*='Buscar']",
-                "input[aria-label*='Search']", "input[aria-label*='Buscar']",
-                "[role='searchbox']", "[role='combobox']"
-            ]
-            for sel in search_selectors:
-                try:
-                    elem = page.locator(sel).first
-                    if await elem.is_visible(timeout=500):
-                        elements["search_boxes"].append({
-                            "selector": sel,
-                            "placeholder": await elem.get_attribute("placeholder"),
-                            "aria-label": await elem.get_attribute("aria-label")
-                        })
-                except Exception:
-                    continue
-            for btn in (await page.locator("button:visible, [role='button']:visible").all())[:max_per_type]:
-                try:
-                    text = (await btn.inner_text()).strip()[:50]
-                    if text:
-                        elements["buttons"].append({
-                            "text": text,
-                            "selector": f"button:has-text('{text[:20]}')" if text else None
-                        })
-                except Exception:
-                    continue
-            for link in (await page.locator("a:visible").all())[:max_per_type]:
-                try:
-                    text = (await link.inner_text()).strip()[:50]
-                    href = await link.get_attribute("href")
-                    if text and href and not href.startswith("#"):
-                        elements["links"].append({"text": text, "href": href[:100]})
-                except Exception:
-                    continue
-        except Exception as e:
-            elements["error"] = str(e)
-        return elements
-
-    @staticmethod
-    async def get_page_summary(page: Page) -> Dict:
-        try:
-            return {
-                "url": page.url,
-                "title": await page.title(),
-                "elements": await PageAnalyzer.get_interactive_elements(page)
-            }
-        except Exception as e:
-            return {"error": str(e), "url": "unknown"}
-
-
 class PlaywrightDriver(BrowserDriver):
     name = "playwright"
 
@@ -372,9 +293,6 @@ class PlaywrightDriver(BrowserDriver):
     @_mapped
     async def wait(self, ms: int) -> None:
         await self.page.wait_for_timeout(max(ms, 0))
-
-    async def legacy_context(self) -> Dict:
-        return await PageAnalyzer.get_page_summary(self.page)
 
     async def close(self) -> int:
         closed = 0

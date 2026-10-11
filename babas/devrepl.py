@@ -1,14 +1,17 @@
 import asyncio
 import json
 import logging
+import os
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-from babas.bridge.server import BridgeServer
+from babas.bridge.server import BridgeServer, default_pairing_file
 from babas.drivers.base import BrowserDriver, DriverError, Element, Target
 from babas.drivers.extension_driver import ExtensionDriver
+from babas.logs import setup_logging
+from babas.safety import SafetyPolicy
 
 log = logging.getLogger("babas.devrepl")
 
@@ -263,20 +266,57 @@ async def _watch_connection(bridge: BridgeServer) -> None:
             print("Extension disconnected")
 
 
+def _pairing_problem(path: Path) -> Optional[str]:
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            return f"The pairing file {path} cannot be read ({exc.strerror or type(exc).__name__}). Run: python -m babas pair --reset"
+        except ValueError:
+            return f"The pairing file {path} is corrupt. Run: python -m babas pair --reset"
+        token = data.get("token") if isinstance(data, dict) else None
+        if not isinstance(token, str) or not token:
+            return f"The pairing file {path} is corrupt. Run: python -m babas pair --reset"
+        return None
+    try:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as exc:
+        return f"Cannot create the pairing folder {path.parent}: {exc.strerror or type(exc).__name__}"
+    if not os.access(path.parent, os.W_OK | os.X_OK):
+        return f"Cannot create the pairing file {path}: the folder is not writable"
+    return None
+
+
 async def run_serve(host: str, port: int, repl: bool) -> None:
-    bridge = BridgeServer(host, port)
+    setup_logging("WARNING" if repl else "INFO")
+    pairing_file = default_pairing_file()
+    problem = _pairing_problem(pairing_file)
+    if problem:
+        print(problem)
+        raise SystemExit(1)
+    bridge = BridgeServer(host, port, pairing_file=pairing_file)
     try:
         await bridge.start()
     except OSError as exc:
         print(f"Could not listen on {host}:{port}: {exc}")
         raise SystemExit(1) from None
     print(f"BABAS bridge on ws://{host}:{bridge.port} — waiting for the extension…")
+    print(f"Pairing file: {pairing_file}")
     watcher = asyncio.get_running_loop().create_task(_watch_connection(bridge))
+    session: Any = None
     try:
         if repl:
             await _run_repl(ExtensionDriver(bridge), bridge)
         else:
+            from babas.llm import OpenAIClient
+            from babas.session import Session
+
+            if not os.environ.get("OPENAI_API_KEY"):
+                print("Note: OPENAI_API_KEY is not set, so tasks from the side panel will fail until it is.")
+            session = Session(bridge, lambda: OpenAIClient(), SafetyPolicy.from_env())
             await asyncio.Event().wait()
     finally:
         watcher.cancel()
+        if session is not None:
+            await session.stop()
         await bridge.stop()

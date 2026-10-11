@@ -160,12 +160,17 @@ class BridgeServer:
         self._pending[envelope.id] = future
         try:
             await conn.send(envelope.model_dump_json())
-            result: ResultMessage = await asyncio.wait_for(future, timeout)
-        except asyncio.TimeoutError:
-            raise DriverError(ErrorCode.TIMEOUT, f"The extension did not answer '{type}' within {timeout:.0f} s") from None
+            # asyncio.wait_for can swallow a cancellation that arrives together with the result on Python < 3.12,
+            # which would make Stop silently fail; asyncio.wait never does.
+            done, _ = await asyncio.wait({future}, timeout=timeout)
+            if not done:
+                raise DriverError(ErrorCode.TIMEOUT, f"The extension did not answer '{type}' within {timeout:.0f} s")
+            result: ResultMessage = future.result()
         except ConnectionClosed:
             raise DriverError(ErrorCode.NO_EXTENSION, "The extension disconnected") from None
         finally:
+            if not future.done():
+                future.cancel()
             self._pending.pop(envelope.id, None)
         if not result.ok:
             error = result.error
