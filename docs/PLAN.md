@@ -13,7 +13,7 @@ interfaces, verification commands and commit points. The specs are `docs/PROTOCO
 | Phase | State | Notes |
 |---|---|---|
 | P1 | done | Package split, `PlaywrightDriver`, `ExtensionDriver`, bridge, `serve --repl`, 169 vitest + 79 pytest tests, CI workflow (green on `dcac297`). See "As built" in `docs/tasks/P1.md`. Not done: independent code review of P1 (started, then stopped). Next: P2 |
-| P2 | done (local commits, not pushed) | Action union, LLM seam, safety core, channels, `SafeDriver` gate, actions on primitives, observe → act `Agent`, SW enforcement (approvals, Stop, allowlist, pairing), Spanish side panel, `Session`, `serve`/`pair`/CLI on the new agent; 386 vitest + 967 pytest (75 e2e) green. See "As built" in `docs/tasks/P2.md`. Not done: real LLM/site runs (manual: `docs/manual-tests.md`), independent review. Next: P3 |
+| P2 | done | Action union, LLM seam, safety core, channels, `SafeDriver` gate, actions on primitives, observe → act `Agent`, SW enforcement (approvals, Stop, allowlist, pairing), Spanish side panel, `Session`, `serve`/`pair`/CLI on the new agent; 386 vitest + 967 pytest (75 e2e) green. See "As built" in `docs/tasks/P2.md`. Not done: real LLM/site runs (manual: `docs/manual-tests.md`), independent review. Next: P3 |
 | P3 | not started | |
 | P4 | not started | Live flows need the user (P4.7) |
 

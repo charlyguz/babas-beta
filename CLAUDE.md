@@ -40,7 +40,7 @@ brain, and expose it over MCP. The roadmap is `docs/PLAN.md`.
 | Phase | Scope | State |
 |---|---|---|
 | P1 | `babas/` package, async `BrowserDriver`, WebSocket bridge, minimal extension, tests, CI | done (see "As built" in `docs/tasks/P1.md`) |
-| P2 | All actions, side panel, safety gate and confirmations, observe → act agent | done (see "As built" in `docs/tasks/P2.md`; committed locally, not pushed) |
+| P2 | All actions, side panel, safety gate and confirmations, observe → act agent | done (see "As built" in `docs/tasks/P2.md`) |
 | P3 | OpenAI-compatible provider config, logging, MCP server | not started (next: `docs/tasks/P3.md`) |
 | P4 | Spanish assistant prompt, 2 real flows, README + GIF, MIT license | not started |
 
@@ -203,4 +203,4 @@ Set `chrome.storage.local.bridgePort` from the service worker to point it at a t
     injective digests, allowlist exemptions only for tab.info/switch/close/new-without-url, `<=50` pending UI requests.
   - The Python gate is stricter too (single-character `press` = typing, non-http(s) URLs refused, hardened host parsing).
   - An explicit `screenshot` action writes `screenshot_*.png` to the working directory (SAFETY.md §6 clarified).
-  - P2 work is committed locally and not pushed (the user asked for local commits and no CI/PR).
+  - P2 was committed locally first (the user asked for no push, PR or CI wait), then pushed on request.
