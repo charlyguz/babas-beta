@@ -122,7 +122,7 @@ class BridgeServer:
                 raise ValueError("first message must be hello")
             hello = Hello.model_validate(envelope.payload)
         except (asyncio.TimeoutError, ValueError, ValidationError, ConnectionClosed) as exc:
-            log.warning("rejected bridge client: %s", exc)
+            log.log(logging.DEBUG if isinstance(exc, ConnectionClosed) else logging.WARNING, "rejected bridge client: %s", exc)
             await conn.close(1008, "hello expected")
             return None
         if hello.protocol != PROTOCOL_VERSION:

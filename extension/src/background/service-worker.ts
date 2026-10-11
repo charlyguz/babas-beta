@@ -23,10 +23,20 @@ async function workingTabId(): Promise<number> {
       currentTabId = null;
     }
   }
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await pickWorkingTab();
   if (!tab || tab.id === undefined) throw new BabasError('TAB_NOT_FOUND', 'There is no active tab to work on');
   currentTabId = tab.id;
   return tab.id;
+}
+
+async function pickWorkingTab(): Promise<chrome.tabs.Tab | undefined> {
+  const [focused] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (focused?.id !== undefined) return focused;
+  const [anyActive] = await chrome.tabs.query({ active: true });
+  if (anyActive?.id !== undefined) return anyActive;
+  const webTabs = (await chrome.tabs.query({})).filter((t) => t.id !== undefined && /^https?:\/\//i.test(t.url ?? ''));
+  webTabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0));
+  return webTabs[0];
 }
 
 async function tabSummary(tabId: number): Promise<Record<string, unknown>> {
