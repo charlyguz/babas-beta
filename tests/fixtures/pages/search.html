@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Buscador de recetas</title>
+</head>
+<body>
+  <h1>Recetas</h1>
+  <form role="search" method="get" action="search.html">
+    <input name="q" placeholder="Buscar" aria-label="Buscar recetas">
+    <button type="submit">Buscar</button>
+  </form>
+  <p id="resultado"></p>
+  <script>
+    var q = new URLSearchParams(location.search).get("q");
+    document.getElementById("resultado").textContent = q ? "Resultados para: " + q : "Escriba lo que busca.";
+  </script>
+</body>
+</html>

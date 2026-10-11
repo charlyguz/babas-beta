@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Verificación</title>
+</head>
+<body>
+  <h1>Consulta de trámite</h1>
+  <form id="verificacion" onsubmit="event.preventDefault(); document.getElementById('estado').textContent = 'Verificado';">
+    <label>Folio <input name="folio" id="folio"></label>
+    <div class="g-recaptcha" data-sitekey="test-site-key">
+      <label><input type="checkbox" id="robot"> No soy un robot</label>
+    </div>
+    <button type="submit">Continuar</button>
+  </form>
+  <p id="estado"></p>
+</body>
+</html>

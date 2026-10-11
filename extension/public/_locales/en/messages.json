@@ -1,0 +1,165 @@
+{
+  "extName": {
+    "message": "BABAS"
+  },
+  "extDescription": {
+    "message": "Your step-by-step browser assistant. It always asks before doing anything important."
+  },
+  "statusConnected": {
+    "message": "Connected"
+  },
+  "statusDisconnected": {
+    "message": "Not connected to BABAS"
+  },
+  "statusHalted": {
+    "message": "Stopped"
+  },
+  "statusWorking": {
+    "message": "Working…"
+  },
+  "inputPlaceholder": {
+    "message": "What would you like to do? For example: find recipe videos on YouTube"
+  },
+  "send": {
+    "message": "Send"
+  },
+  "stop": {
+    "message": "Stop"
+  },
+  "resume": {
+    "message": "Resume"
+  },
+  "confirmYes": {
+    "message": "Yes, continue"
+  },
+  "confirmNo": {
+    "message": "No"
+  },
+  "babasSays": {
+    "message": "BABAS says:"
+  },
+  "titlePayment": {
+    "message": "Confirm a payment"
+  },
+  "titleSubmit": {
+    "message": "Submit a form"
+  },
+  "titlePii": {
+    "message": "Type personal data"
+  },
+  "titleImportant": {
+    "message": "Important action"
+  },
+  "askReply": {
+    "message": "Reply"
+  },
+  "askCancel": {
+    "message": "Cancel"
+  },
+  "askPlaceholder": {
+    "message": "Type your answer here"
+  },
+  "handoffDone": {
+    "message": "Done"
+  },
+  "allowTitle": {
+    "message": "Allow this site?"
+  },
+  "allowText": {
+    "message": "BABAS wants to use $HOST$.",
+    "placeholders": {
+      "host": {
+        "content": "$1"
+      }
+    }
+  },
+  "allowYes": {
+    "message": "Allow"
+  },
+  "allowNo": {
+    "message": "Don't allow"
+  },
+  "notConnectedHelp": {
+    "message": "Start the BABAS app on your computer (python -m babas serve)."
+  },
+  "runDone": {
+    "message": "Done."
+  },
+  "runStopped": {
+    "message": "Stopped. Nothing else was done."
+  },
+  "runFailed": {
+    "message": "I couldn't finish the task."
+  },
+  "settings": {
+    "message": "Settings"
+  },
+  "settingsPort": {
+    "message": "Connection port"
+  },
+  "settingsSites": {
+    "message": "Allowed sites"
+  },
+  "settingsNoSites": {
+    "message": "None yet"
+  },
+  "remove": {
+    "message": "Remove"
+  },
+  "pageFallbackLabel": {
+    "message": "the page"
+  },
+  "lineClick": {
+    "message": "Press “$LABEL$” on $HOST$",
+    "placeholders": {
+      "label": {
+        "content": "$1"
+      },
+      "host": {
+        "content": "$2"
+      }
+    }
+  },
+  "lineType": {
+    "message": "Type “$TEXT$” in “$LABEL$” ($HOST$)",
+    "placeholders": {
+      "text": {
+        "content": "$1"
+      },
+      "label": {
+        "content": "$2"
+      },
+      "host": {
+        "content": "$3"
+      }
+    }
+  },
+  "lineSelect": {
+    "message": "Choose “$VALUE$” in “$LABEL$” ($HOST$)",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      },
+      "label": {
+        "content": "$2"
+      },
+      "host": {
+        "content": "$3"
+      }
+    }
+  },
+  "linePress": {
+    "message": "Press the $KEY$ key in “$LABEL$” ($HOST$)",
+    "placeholders": {
+      "key": {
+        "content": "$1"
+      },
+      "label": {
+        "content": "$2"
+      },
+      "host": {
+        "content": "$3"
+      }
+    }
+  }
+}

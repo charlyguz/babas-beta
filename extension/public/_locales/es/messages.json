@@ -1,0 +1,165 @@
+{
+  "extName": {
+    "message": "BABAS"
+  },
+  "extDescription": {
+    "message": "Su asistente para usar internet paso a paso. Siempre le pregunta antes de hacer algo importante."
+  },
+  "statusConnected": {
+    "message": "Conectado"
+  },
+  "statusDisconnected": {
+    "message": "Sin conexión con BABAS"
+  },
+  "statusHalted": {
+    "message": "Detenido"
+  },
+  "statusWorking": {
+    "message": "Trabajando…"
+  },
+  "inputPlaceholder": {
+    "message": "¿Qué quiere hacer? Por ejemplo: busque videos de recetas en YouTube"
+  },
+  "send": {
+    "message": "Enviar"
+  },
+  "stop": {
+    "message": "Detener"
+  },
+  "resume": {
+    "message": "Reanudar"
+  },
+  "confirmYes": {
+    "message": "Sí, continuar"
+  },
+  "confirmNo": {
+    "message": "No"
+  },
+  "babasSays": {
+    "message": "BABAS dice:"
+  },
+  "titlePayment": {
+    "message": "Confirmar un pago"
+  },
+  "titleSubmit": {
+    "message": "Enviar un formulario"
+  },
+  "titlePii": {
+    "message": "Escribir datos personales"
+  },
+  "titleImportant": {
+    "message": "Acción importante"
+  },
+  "askReply": {
+    "message": "Responder"
+  },
+  "askCancel": {
+    "message": "Cancelar"
+  },
+  "askPlaceholder": {
+    "message": "Escriba su respuesta aquí"
+  },
+  "handoffDone": {
+    "message": "Listo"
+  },
+  "allowTitle": {
+    "message": "¿Permitir este sitio?"
+  },
+  "allowText": {
+    "message": "BABAS quiere usar el sitio $HOST$.",
+    "placeholders": {
+      "host": {
+        "content": "$1"
+      }
+    }
+  },
+  "allowYes": {
+    "message": "Permitir"
+  },
+  "allowNo": {
+    "message": "No permitir"
+  },
+  "notConnectedHelp": {
+    "message": "Abra la aplicación BABAS en su computadora (python -m babas serve)."
+  },
+  "runDone": {
+    "message": "Listo."
+  },
+  "runStopped": {
+    "message": "Detenido. No se hizo nada más."
+  },
+  "runFailed": {
+    "message": "No pude terminar la tarea."
+  },
+  "settings": {
+    "message": "Ajustes"
+  },
+  "settingsPort": {
+    "message": "Puerto de conexión"
+  },
+  "settingsSites": {
+    "message": "Sitios permitidos"
+  },
+  "settingsNoSites": {
+    "message": "Ninguno todavía"
+  },
+  "remove": {
+    "message": "Quitar"
+  },
+  "pageFallbackLabel": {
+    "message": "la página"
+  },
+  "lineClick": {
+    "message": "Presionar «$LABEL$» en $HOST$",
+    "placeholders": {
+      "label": {
+        "content": "$1"
+      },
+      "host": {
+        "content": "$2"
+      }
+    }
+  },
+  "lineType": {
+    "message": "Escribir «$TEXT$» en «$LABEL$» ($HOST$)",
+    "placeholders": {
+      "text": {
+        "content": "$1"
+      },
+      "label": {
+        "content": "$2"
+      },
+      "host": {
+        "content": "$3"
+      }
+    }
+  },
+  "lineSelect": {
+    "message": "Elegir «$VALUE$» en «$LABEL$» ($HOST$)",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      },
+      "label": {
+        "content": "$2"
+      },
+      "host": {
+        "content": "$3"
+      }
+    }
+  },
+  "linePress": {
+    "message": "Presionar la tecla $KEY$ en «$LABEL$» ($HOST$)",
+    "placeholders": {
+      "key": {
+        "content": "$1"
+      },
+      "label": {
+        "content": "$2"
+      },
+      "host": {
+        "content": "$3"
+      }
+    }
+  }
+}

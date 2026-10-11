@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "BABAS",
+  "name": "__MSG_extName__",
   "short_name": "BABAS",
   "version": "0.2.0",
-  "description": "Your browser assistant: BABAS uses your real browser step by step and asks before anything important.",
+  "description": "__MSG_extDescription__",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuYnRq/osAMNixVPLj6h1z7843XWhcjPu81t0V/LRLlnO/cEwIugXmmzn+yyXMFRuNKGge9jtJ2LSssKafntCzv9ZkaLontoCZk3lZHMHMYfX/Pcyoa4QsZmtGDIYwoCevsjf3luZc5iD2NCxZjk6wkL4xt7JD9Oc07XWGMenheMuU8Ql6RSaMQj+Oo1wZpwbLZiXFaMmjbjZPAC3PiUugTLj5+MhG8pXuw2vuReaTWmYjMnXGnBZNPck6qFmqpwBgay1IyHqfqCPfjbLghCu8NFBI1MODFdnkk72C+ow4WTctVeWRefX4r1PXxv53/gDeBqINh5f6nTqTy1mr+xJGQIDAQAB",
   "minimum_chrome_version": "116",
   "background": {
@@ -14,13 +14,15 @@
     "tabs",
     "scripting",
     "storage",
-    "alarms"
+    "alarms",
+    "sidePanel",
+    "tabGroups"
   ],
   "host_permissions": [
     "<all_urls>"
   ],
   "action": {
-    "default_title": "BABAS",
+    "default_title": "__MSG_extName__",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png"
@@ -31,5 +33,9 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "default_locale": "es",
+  "side_panel": {
+    "default_path": "sidepanel.html"
   }
 }

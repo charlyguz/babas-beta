@@ -1,5 +1,6 @@
 import asyncio
 import functools
+import os
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -14,7 +15,8 @@ from babas.bridge.server import BridgeServer
 
 ROOT = Path(__file__).resolve().parent.parent
 PAGES_DIR = ROOT / "tests" / "fixtures" / "pages"
-EXTENSION_DIST = ROOT / "extension" / "dist"
+EXTENSION_DIST = Path(os.environ.get("BABAS_EXT_DIST") or ROOT / "extension" / "dist")
+TEST_SITES = ["gob.mx", "google.com", "google.com.mx", "youtube.com", "whatsapp.com", "wikipedia.org", "127.0.0.1"]
 VIEWPORT = {"width": 1280, "height": 720}
 
 
@@ -25,7 +27,8 @@ class _QuietHandler(SimpleHTTPRequestHandler):
 
 async def _set_bridge_port(sw, port: int) -> None:
     # The worker handle can be returned before chrome.* is bound inside it.
-    expression = f"chrome.storage.local.set({{bridgePort: {port}}})"
+    sites = ", ".join(f'"{site}"' for site in TEST_SITES)
+    expression = f"chrome.storage.local.set({{bridgePort: {port}, allowedSites: [{sites}]}})"
     for _ in range(50):
         try:
             await sw.evaluate(expression)
