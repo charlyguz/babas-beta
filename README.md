@@ -50,18 +50,27 @@ python -m babas
 "in new tab open twitter"
 ```
 
-## Extension (developer preview)
+## Extension and side panel (preview)
 
-BABAS can also drive your real Chrome/Chromium through a browser extension instead of Playwright.
-This preview has no AI planner attached yet: a developer console lets you list, highlight, click and type on a real page.
+BABAS can drive your real Chrome/Chromium through a browser extension with a side panel, instead of Playwright.
+The panel is Spanish-first (it follows the browser language) and BABAS always asks before anything important.
 
 ```bash
 cd extension && npm ci && npm run build      # builds extension/dist
 ```
 
 1. Open `chrome://extensions`, turn on Developer mode, click "Load unpacked" and choose `extension/dist`.
-2. Start the bridge with the console: `python -m babas serve --repl`
-3. In the console: `goto https://www.wikipedia.org`, `ls` (numbers every element and highlights it on the page), `type 0 pozole`, `click 1`. Type `help` for all commands.
+2. Put `OPENAI_API_KEY` in `.env` and start the app: `python -m babas serve`
+3. Click the BABAS icon to open the side panel and type a task, for example "busque videos de recetas en YouTube".
+   The first connection pairs the extension with the app automatically; if it ever says "Sin conexión con BABAS" after a
+   reinstall, run `python -m babas pair --reset`.
+
+What it asks you about: submitting forms, sending/paying/deleting, typing personal data (CURP, RFC, NSS, email, phone),
+and any site outside the allowed list (gob.mx, google.com, youtube.com, whatsapp.com, wikipedia.org). Logins and
+CAPTCHAs are always left to you, and the red Stop button always works.
+
+Developer console without the AI: `python -m babas serve --repl` (`goto URL`, `ls`, `click N`, `type N text`, `help`).
+Manual checklist per site: `docs/manual-tests.md`.
 
 Tests: `pip install -e '.[dev]' && pytest -q` and `cd extension && npm test`.
 

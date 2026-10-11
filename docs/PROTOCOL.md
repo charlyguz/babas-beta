@@ -153,3 +153,22 @@ pending ui request with `reason: "stopped"`, emits `run.stop`, and clears the pa
   saved, and it is sent in `welcome.token`. The SW stores it as `chrome.storage.local.pairToken` and sends it in every later `hello`.
 - If the file exists, `hello.token` must match (`hmac.compare_digest`); otherwise the server closes with 1008 `not paired`.
 - `python -m babas pair --reset` deletes the file.
+
+## 5. Service worker behavior as built (P2)
+- Rules for `page.*` and `tab.*` in order: Stop (`HALTED`), working tab must be a BABAS tab (else `TAB_NOT_FOUND`), allowlist
+  (`DOMAIN_NOT_ALLOWED` with `{host, url}`; `host` is `''` for `file:`/`ftp:`), then, for `page.act`, the approval.
+- Exempt from the allowlist (they read no page content): `tab.info`, `tab.switch`, `tab.close`, `tab.new` without a URL.
+  Still subject to Stop. `tab.switch`/`tab.close` need a BABAS tab; `tab.close` without `tab_id` closes only the current
+  BABAS tab. `tab.new` with a non-http(s) URL is `BAD_REQUEST`. The panel is never adopted as the working tab.
+- `allowedSites` defaults (`gob.mx`, `google.com`, `google.com.mx`, `youtube.com`, `whatsapp.com`, `wikipedia.org`) apply
+  while the storage key is unset; the first add/remove materializes the list.
+- `ui.confirm` replies `{approved: true, confirmation_id}` or `{approved: false, reason: "denied"|"timeout"|"stopped"}`;
+  `ui.ask` replies `{answer: string}` (the handoff "Listo" button sends a string) or `{answer: null, reason}`;
+  `ui.allow_site` replies `{approved: true}` or `{approved: false, reason}`. A halted worker answers all three negatively
+  at once. `ui.run_state` "running" is ignored while halted.
+- Approvals: `{tabId, host, digests[], expiresAt}`; `consumeApproval` is atomic; the digest escapes `\` and U+241F
+  inside fields (identical to the section 4 string for ordinary values). The authorization is consumed in a `prepare`
+  hook right before the page command is sent, after re-checking Stop and the allowlist on the current URL.
+- Pending UI requests are capped at 50 (more are denied), and all open cards are resolved as stopped when the bridge drops.
+- Pairing close: the server answers a wrong/missing token with 1008 "not paired" (the extension keeps retrying every
+  <= 5 s); a corrupt/unwritable pairing file is rejected the same way and only the server log says why.

@@ -40,52 +40,45 @@ brain, and expose it over MCP. The roadmap is `docs/PLAN.md`.
 | Phase | Scope | State |
 |---|---|---|
 | P1 | `babas/` package, async `BrowserDriver`, WebSocket bridge, minimal extension, tests, CI | done (see "As built" in `docs/tasks/P1.md`) |
-| P2 | All actions, side panel, safety gate and confirmations, observe → act agent | not started (next: `docs/tasks/P2.md`) |
-| P3 | OpenAI-compatible provider config, logging, MCP server | not started |
+| P2 | All actions, side panel, safety gate and confirmations, observe → act agent | done (see "As built" in `docs/tasks/P2.md`; committed locally, not pushed) |
+| P3 | OpenAI-compatible provider config, logging, MCP server | not started (next: `docs/tasks/P3.md`) |
 | P4 | Spanish assistant prompt, 2 real flows, README + GIF, MIT license | not started |
 
 ## Layout (now)
 | Path | Responsibility |
 |---|---|
 | `babas_voice.py` / `babas_listen.py` / `babas_gui.py` | Optional ElevenLabs "butler" TTS / mic + Whisper (`language="en"`) / customtkinter control panel (CLI only). Loaded lazily through `babas/voice.py` |
-| `babas/__main__.py` | `python -m babas [cli\|serve]` (argparse; no subcommand = `cli`) |
-| `babas/cli.py` | Console agent (legacy REPL ported to asyncio): browser/session selection, voice mode, hacker easter egg, private `_ainput` |
-| `babas/agent.py` | Legacy plan-once agent: lazy `get_client()`, `create_plan`, `create_recovery_plan`, `run_plan_with_recovery` (replaced by the observe → act `Agent` in P2.7) |
-| `babas/actions.py` | `ActionRegistry` + `ActionExecutor`: the 21 legacy actions on `PlaywrightDriver` (rewritten on driver primitives in P2.6) |
-| `babas/schemas.py` | Action schemas: still the flat `Step`/`Plan` (P2.1 makes them a discriminated union) |
-| `babas/prompts/__init__.py` | Legacy `SYSTEM_PROMPT`/`RECOVERY_PROMPT` (replaced by builders in P2.7) |
-| `babas/voice.py` | Lazy loaders for the optional voice modules (importing it prints nothing) |
-| `babas/debug.py` | Temp debug dir and async error screenshots |
-| `babas/devrepl.py` | `serve` (bridge + connection status) and the developer REPL (`ls`, `click N`, `type N text`, `help`) |
-| `babas/drivers/base.py` | `BrowserDriver` ABC, `Target`, `Element`, `PageState`, `DriverError`, `ErrorCode`, flag names |
-| `babas/drivers/playwright_driver.py` | `PlaywrightDriver` (`page_script.js` for snapshots, native Playwright input), `PageAnalyzer`, browser discovery/launch/CDP helpers |
-| `babas/drivers/extension_driver.py` | `ExtensionDriver`: every method is one bridge request (`docs/PROTOCOL.md` §1) |
+| `babas/__main__.py` | `python -m babas [cli\|serve\|pair]` (argparse; no subcommand = `cli`; `pair [--reset]` shows/removes the pairing file) |
+| `babas/cli.py` | Console agent: browser/session selection, voice mode, hacker easter egg, runs the `Agent` with console confirmations (SIGINT cancels the run), private `_ainput` |
+| `babas/session.py` | `Session`: side-panel tasks (`task.start`/`run.stop` events) → `Agent` over `SafeDriver(ExtensionDriver)` + `PanelChannel`; Stop cancels the run |
+| `babas/agent.py` | `Agent`: observe → plan (1-3 steps) → act, recovery, handoffs, batch confirmations, masked history; `RunResult`, `summarize_step` |
+| `babas/actions.py` | `ActionExecutor`: the 21 legacy actions plus `select_option`/`read_text` on driver primitives (no Playwright) |
+| `babas/schemas.py` | Per-action pydantic models, `Step`/`ActStep` unions, `Plan`, `changes_page`, `plan_json_schema` |
+| `babas/prompts/__init__.py` | `build_system_prompt` (rules + action catalog from the schemas), `build_turn_message` |
+| `babas/llm.py` | `LLMClient` protocol, `extract_json`, lazy `OpenAIClient` (P3 generalizes) |
+| `babas/safety.py` | `SafetyPolicy` (flags → allow/confirm/handoff, allowlist, host parsing), PII detect/mask/redact, Spanish confirmation texts |
+| `babas/gate.py` | `SafeDriver`: wraps any `BrowserDriver`; confirmations, batch approval, handoffs, domain prompts; `ActionDenied`, `HandoffRequired` |
+| `babas/channels.py` | `UserChannel` implementations: `ConsoleChannel`, `DenyChannel`, `PanelChannel` (bridge `ui.*` requests) |
+| `babas/logs.py` | `RedactingFilter`, `setup_logging` (stderr) |
+| `babas/voice.py` / `babas/debug.py` | Lazy loaders for the optional voice modules (silent import) / temp debug dir and error screenshots |
+| `babas/devrepl.py` | `serve` (bridge + pairing file + `Session`, or `--repl`: developer console `ls`, `click N`, `type N text`, `help`) |
+| `babas/drivers/base.py` | `BrowserDriver` ABC, `Target`, `Element`, `PageState` (+`to_prompt`), `DriverError`, `ErrorCode`, flag names |
+| `babas/drivers/playwright_driver.py` | `PlaywrightDriver` (`page_script.js` for snapshots, native Playwright input), browser discovery/launch/CDP helpers |
+| `babas/drivers/extension_driver.py` | `ExtensionDriver`: every method is one bridge request; `act_payload` builds every `page.act` |
 | `babas/drivers/page_script.js` | **Generated** bundle of `extension/src/page` (`window.__babas.handle`); never edit by hand |
-| `babas/bridge/protocol.py` | Envelope models, `PROTOCOL_VERSION`, `DEFAULT_PORT`, `PINNED_EXTENSION_ID` |
-| `babas/bridge/server.py` | `BridgeServer`: WebSocket on 127.0.0.1, Origin pinning, hello/welcome, request→result futures, events |
-| `extension/public/manifest.json` | MV3 manifest; its `key` pins the ID `ooflejhodolbaphddedikkpleeephhmp` |
-| `extension/src/shared/protocol.ts` | TS mirror of the protocol: types, `BabasError`, guards |
-| `extension/src/page/` | DOM logic shared by the content script and `page_script.js` (file list below) |
+| `babas/bridge/protocol.py`, `server.py` | Envelope models and constants; `BridgeServer` (127.0.0.1, Origin pinning, trust-on-first-use pairing, request→result futures, events) |
+| `extension/public/` | `manifest.json` (its `key` pins the ID `ooflejhodolbaphddedikkpleeephhmp`), icons, `_locales/{es,en}` (every UI string) |
+| `extension/src/shared/` | `protocol.ts` (bridge types, `BabasError`, guards), `messages.ts` (side panel ⇄ SW port types) |
+| `extension/src/page/` | DOM logic shared by the content script and `page_script.js`: `snapshot` (indexer), `classify` (risk flags, gate reasons), `resolve`, `actions`, `highlight`, `handle`, `dom`/`text`/`pii` |
 | `extension/src/content/main.ts` | Content script: `{babas: PageCommand}` runtime messages → `handle()` |
-| `extension/src/background/` | SW: `bridge.ts` (WS client, keepalive, reconnect), `tabs.ts` (inject, settle, navigate), `service-worker.ts` (request handlers) |
+| `extension/src/background/` | SW: `bridge.ts` (WS client), `tabs.ts` (inject, settle, navigate, `prepare` hook), `scope.ts` (working tab, adoption, tab group), `state.ts` (storage, atomic approvals), `policy.ts` (pure: allowlist, digest, texts), `ui.ts` (panel ports, pending requests, badge), `service-worker.ts` (handlers) |
+| `extension/sidepanel.html`, `extension/src/sidepanel/` | Side panel: `model` (pure reducer), `view` (DOM, `textContent` only), `connection` (port + backoff), `i18n`, `main` |
 | `extension/scripts/make_icons.py` | Regenerates `public/icons/*.png` |
-| `tests/` | `conftest.py` (fixtures `pages_url`, `pw`, `playwright_driver`, `ext_env`, `extension_driver`, `driver`), `test_protocol.py`, `test_bridge.py`, `e2e/test_contract.py` (both drivers), `e2e/test_reconnect.py`, `fixtures/{pages,protocol}` |
+| `tests/` | `conftest.py` (fixtures: `pages_url`, `pw`, `playwright_driver`, `ext_env`, `extension_driver`, `driver`, `fake_llm`, `session`, `panel`, ...), `helpers.py` (`FakeLLM`, `FakeDriver`, `RecordingChannel`, `FakeBridge`), unit tests per module, `e2e/` (contract on both drivers, reconnect, panel, safety), `fixtures/{pages,protocol,pii_cases.json}` |
 | `.github/workflows/ci.yml` | CI: extension typecheck/test/build, `page_script.js` freshness, `pytest -q` |
-| `docs/` | `PLAN.md`, `PROTOCOL.md`, `SAFETY.md`, `tasks/P1-P4.md` |
+| `docs/` | `PLAN.md`, `PROTOCOL.md`, `SAFETY.md`, `manual-tests.md`, `tasks/P1-P4.md` |
 
-`extension/src/page/` files:
-- `snapshot.ts`: indexer and current snapshot map.
-- `classify.ts`: risk flags and gate reasons.
-- `resolve.ts`: target resolution.
-- `actions.ts`: click, type, press, select, scroll, read, idle, mark.
-- `highlight.ts`: overlay.
-- `handle.ts`: dispatcher.
-- `dom.ts`, `text.ts`, `pii.ts`: helpers. `test-helpers.ts`: vitest layout stub (tests only).
-
-Planned for P2/P3:
-- `babas/{llm,safety,logs,channels,gate,session,config,mcp_server}.py`
-- `babas/prompts/assistant_es.md`
-- `extension/src/{sidepanel/, background/{state,policy,ui}.ts, shared/messages.ts}`, `extension/sidepanel.html`
+Planned for P3: `babas/{config,mcp_server}.py` (+ generalizing `llm.py`), `docs/providers.md`. P4: `babas/prompts/assistant_es.md`, `docs/flows/`.
 
 ## Environment and commands
 Cloud container (Claude Code on the web):
@@ -96,14 +89,15 @@ Cloud container (Claude Code on the web):
 python3 -m venv .venv && . .venv/bin/activate && pip install -U pip
 pip install "playwright==1.56.0" && pip install -e '.[dev]'
 (cd extension && npm ci && npm run typecheck && npm test && npm run build)   # build also regenerates babas/drivers/page_script.js
-pytest -q                          # unit + e2e (e2e: headless Chromium; extension tests skip if extension/dist is missing)
+pytest -q                          # unit + e2e (~2 min); e2e needs extension/dist (skips otherwise), BABAS_EXT_DIST overrides it
 python -m babas                    # console agent (needs OPENAI_API_KEY in .env)
-python -m babas serve --repl       # developer console through the extension (P1); load extension/dist first
-python -m babas serve              # side panel tasks (after P2); add --mcp-http in P3
+python -m babas serve              # side panel tasks: load extension/dist, click the BABAS icon (add --mcp-http in P3)
+python -m babas serve --repl       # developer console through the extension (no AI)
+python -m babas pair [--reset]     # show / remove the pairing file (~/.babas/pairing.json)
 python -m babas mcp                # MCP over stdio (after P3)
 ```
-To load the extension by hand: `chrome://extensions` → Developer mode → Load unpacked → `extension/dist`. Then click
-the BABAS icon (P2 adds the side panel). Tests load it with Playwright:
+To load the extension by hand: `chrome://extensions` → Developer mode → Load unpacked → `extension/dist` (always after a
+full `npm run build`). Then click the BABAS icon to open the side panel. Tests load it with Playwright:
 `launch_persistent_context(dir, channel="chromium", headless=True, args=["--disable-extensions-except=DIST", "--load-extension=DIST"])`.
 Set `chrome.storage.local.bridgePort` from the service worker to point it at a test server.
 
@@ -172,6 +166,17 @@ Set `chrome.storage.local.bridgePort` from the service worker to point it at a t
 - Tests set `chrome.storage.local.bridgePort` through the service worker, and the worker handle can come back before
   `chrome.*` is bound inside it: retry briefly (`_set_bridge_port` in `tests/conftest.py`).
 - A click on a covered element is `OBSCURED` through the extension, but `TIMEOUT` after 5 s through Playwright's native actionability checks.
+- The manifest declares `side_panel`: Chromium refuses to load the extension if `dist/` lacks `sidepanel.html`, so always
+  use the full `npm run build` (its last step builds the panel). Parallel work uses private copies of the extension, never
+  the repo's `dist` (a build in the repo clobbers `dist` and `page_script.js`).
+- `chrome.i18n` follows the browser UI language, not the Playwright locale: tests launch Chromium with `LANGUAGE=es_MX:es`
+  (`tests/conftest.py`). `default_locale: es` is only a fallback, so a Chrome with an English UI shows the English panel.
+- `asyncio.wait_for` can swallow a cancellation that arrives together with its result on Python < 3.12: anything on the
+  Stop path must use `asyncio.wait` (`BridgeServer.request` does; `Session` also re-cancels).
+- Approvals are bound to tab + host + action digest and consumed right before the page action; `allowedSites` defaults
+  apply while the storage key is unset (an install-time write raced with test setup).
+- The agent redacts `ask_user` answers that look like PII in its history, so the LLM cannot type them (P4.2 needs a
+  placeholder mechanism). Tabs opened by pages (`target=_blank`) are outside the BABAS tab set.
 - CDP mode uses a separate BABAS profile because Chrome 136+ refuses to debug the default one. That is why the extension exists.
 
 ## Decisions log
@@ -193,3 +198,9 @@ Set `chrome.storage.local.bridgePort` from the service worker to point it at a t
   - Console input uses a daemon-thread `_ainput`; Ctrl+C at the prompt now exits (P2.12 adds SIGINT -> cancel of the run).
   - `ExtensionDriver.new_tab` rejects duplicate names (`BAD_REQUEST`); `PlaywrightDriver` keeps the legacy overwrite.
   - The CI workflow and the generated `page_script.js` freshness check ship with P1.
+- 2026-10-11 (P2 implementation):
+  - Extension floor is stricter than the playbook: approvals bound to tab/host/digest and consumed at the last moment,
+    injective digests, allowlist exemptions only for tab.info/switch/close/new-without-url, `<=50` pending UI requests.
+  - The Python gate is stricter too (single-character `press` = typing, non-http(s) URLs refused, hardened host parsing).
+  - An explicit `screenshot` action writes `screenshot_*.png` to the working directory (SAFETY.md §6 clarified).
+  - P2 work is committed locally and not pushed (the user asked for local commits and no CI/PR).

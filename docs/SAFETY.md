@@ -105,6 +105,19 @@ When a plan contains consecutive `type_text` / `select_option` steps on the same
 If any of them needs confirmation, it sends **one** `ui.confirm` with all the gated actions, so the user reviews one card
 listing every value. Steps that need no confirmation run without a token.
 
+### As implemented (stricter than the rules above; the code may only be stricter, never looser)
+- A single-character `press` (a letter typed through `press_key`) is evaluated like typing: password field -> handoff,
+  PII/payment field -> confirm. Space on a button or link applies the click rules. Return/NumpadEnter count as Enter and
+  matching is case-insensitive. Enter on any non-search input element (checkbox, radio) is `enter_submits_form`.
+- Python `goto`/`new_tab` refuse non-http(s) URLs (except `about:blank`); the extension treats `file:`/`ftp:` as
+  `DOMAIN_NOT_ALLOWED` with an empty host and `blob:`/`filesystem:` pages by their inner origin. Hosts with backslashes,
+  control characters, percent-encoding, empty labels or failed IDNA are invalid and never allowed. IP-literal allowlist
+  entries match exactly. A host approved for the session is remembered by the policy; `ui.allow_site` in the extension
+  rejects anything that is not a complete site name (bare TLDs).
+- An approval is bound to the tab, the tab's host and the exact action digest, expires after 120 s and is consumed
+  immediately before the page action (after re-checking Stop and the allowlist on the fresh URL).
+- The Python gate keeps its own 120 s ledger of granted approvals; an unknown `confirmation=` never skips a prompt.
+
 ## 5. Handoffs (texts, Spanish)
 - Password or login: "Por seguridad, BABAS no escribe contraseñas. Escriba su contraseña directamente en la página y luego presione «Listo»."
 - CAPTCHA: "La página pide comprobar que usted es una persona. Resuélvalo en la página y luego presione «Listo»."
@@ -117,8 +130,9 @@ URL when `PageState.has_captcha` is true, and whenever a `PASSWORD_FIELD` error 
 - Every log record and every `ui.log` text passes through `redact()`, which masks every PII match (§3).
 - The step log shows typed values masked (`Escribió GO**************09 en «CURP»`). The confirmation card is the only
   place a full value appears.
-- Screenshots: only on explicit request (`screenshot` action) or the CLI's error debug captures. These go to the temp
-  debug dir, which is deleted at exit. Nothing else persists page content.
+- Screenshots: only on explicit request (the `screenshot` action, which writes `screenshot_*.png` to the working
+  directory because the user asked for the file and sees it in the step log) or the CLI's error debug captures (temp debug
+  dir, deleted at exit). Nothing else persists page content.
 - Never write the pairing token, API keys or page text to logs.
 
 ## 7. Test matrix (each rule has a test; P1/P2/P3 files)
