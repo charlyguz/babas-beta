@@ -19,8 +19,30 @@ const targets: Record<string, LibTarget> = {
 };
 
 export default defineConfig(({ mode }): UserConfig => {
+  if (mode === 'sidepanel') {
+    // App build of sidepanel.html. It must run after "sw", which empties dist first.
+    return {
+      root,
+      base: './',
+      publicDir: false,
+      logLevel: 'warn',
+      build: {
+        outDir: `${root}dist`,
+        emptyOutDir: false,
+        target: 'chrome116',
+        minify: false,
+        sourcemap: false,
+        copyPublicDir: false,
+        modulePreload: { polyfill: false },
+        rollupOptions: {
+          input: `${root}sidepanel.html`,
+          output: { entryFileNames: 'assets/sidepanel.js', chunkFileNames: 'assets/[name].js', assetFileNames: 'assets/[name][extname]' },
+        },
+      },
+    };
+  }
   const target = targets[mode];
-  if (!target) throw new Error(`Unknown build mode "${mode}". Use one of: ${Object.keys(targets).join(', ')}`);
+  if (!target) throw new Error(`Unknown build mode "${mode}". Use one of: ${[...Object.keys(targets), 'sidepanel'].join(', ')}`);
   return {
     root,
     publicDir: target.publicDir ? `${root}${target.publicDir}` : false,

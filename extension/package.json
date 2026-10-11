@@ -4,7 +4,7 @@
   "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "build": "vite build --mode sw && vite build --mode content && vite build --mode page",
+    "build": "vite build --mode sw && vite build --mode content && vite build --mode page && vite build --mode sidepanel",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
