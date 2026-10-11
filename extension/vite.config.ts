@@ -1,0 +1,43 @@
+import { fileURLToPath } from 'node:url';
+import { defineConfig, type UserConfig } from 'vite';
+
+const root = fileURLToPath(new URL('.', import.meta.url));
+
+interface LibTarget {
+  entry: string;
+  fileName: string;
+  format: 'es' | 'iife';
+  outDir: string;
+  publicDir?: string;
+  emptyOutDir?: boolean;
+}
+
+const targets: Record<string, LibTarget> = {
+  sw: { entry: 'src/background/service-worker.ts', fileName: 'service-worker.js', format: 'es', outDir: 'dist', publicDir: 'public', emptyOutDir: true },
+  content: { entry: 'src/content/main.ts', fileName: 'content.js', format: 'iife', outDir: 'dist' },
+  page: { entry: 'src/page/global.ts', fileName: 'page_script.js', format: 'iife', outDir: '../babas/drivers' },
+};
+
+export default defineConfig(({ mode }): UserConfig => {
+  const target = targets[mode];
+  if (!target) throw new Error(`Unknown build mode "${mode}". Use one of: ${Object.keys(targets).join(', ')}`);
+  return {
+    root,
+    publicDir: target.publicDir ? `${root}${target.publicDir}` : false,
+    logLevel: 'warn',
+    build: {
+      outDir: `${root}${target.outDir}`,
+      emptyOutDir: target.emptyOutDir ?? false,
+      target: 'chrome116',
+      minify: false,
+      sourcemap: false,
+      copyPublicDir: !!target.publicDir,
+      lib: {
+        entry: `${root}${target.entry}`,
+        formats: [target.format],
+        name: 'BabasBundle',
+        fileName: () => target.fileName,
+      },
+    },
+  };
+});

@@ -70,3 +70,10 @@ desktop.ini
 *.tmp
 *.temp
 
+
+# Node / extension build
+node_modules/
+
+# Images that ARE source (everything else *.png stays ignored)
+!extension/public/icons/*.png
+!docs/media/*.png
