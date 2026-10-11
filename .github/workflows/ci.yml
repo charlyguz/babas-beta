@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Extension (typecheck, unit tests, build)
+        working-directory: extension
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Committed page_script.js is current
+        run: git diff --exit-code babas/drivers/page_script.js
+
+      - name: Install BABAS
+        run: pip install -e '.[dev]'
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Python tests
+        run: pytest -q
