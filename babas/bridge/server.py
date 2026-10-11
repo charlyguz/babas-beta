@@ -1,7 +1,13 @@
 import asyncio
+import contextlib
+import hmac
 import json
 import logging
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+import os
+import secrets
+import tempfile
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from pydantic import ValidationError
 from websockets.asyncio.server import Server, ServerConnection, serve
@@ -28,15 +34,72 @@ HELLO_TIMEOUT = 5.0
 MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 
 
+NOT_PAIRED = "not paired"
+
+
 def default_origins() -> List[str]:
     return [f"chrome-extension://{PINNED_EXTENSION_ID}"]
 
 
+def default_pairing_file() -> Path:
+    home = os.environ.get("BABAS_HOME")
+    base = Path(home).expanduser() if home else Path.home() / ".babas"
+    return base / "pairing.json"
+
+
+def reset_pairing(path: Path) -> bool:
+    try:
+        Path(path).unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _read_token(raw: str) -> Optional[str]:
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    token = data.get("token") if isinstance(data, dict) else None
+    return token if isinstance(token, str) and token else None
+
+
+def _write_token(path: Path, token: str) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".pairing-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"token": token}))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+def _describe_error(exc: Exception) -> str:
+    # Pydantic messages embed the offending input, which for a hello may hold the pairing token.
+    if isinstance(exc, ValidationError):
+        problems = sorted({f"{err['type']} at {'.'.join(str(part) for part in err['loc']) or 'frame'}" for err in exc.errors()})
+        return "invalid frame (" + "; ".join(problems) + ")"
+    return str(exc) or type(exc).__name__
+
+
 class BridgeServer:
-    def __init__(self, host: str = "127.0.0.1", port: int = DEFAULT_PORT, allowed_origins: Optional[List[str]] = None):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = DEFAULT_PORT,
+        allowed_origins: Optional[List[str]] = None,
+        pairing_file: Optional[Path] = None,
+    ):
         self.host = host
         self.port = port
         self.allowed_origins = allowed_origins or default_origins()
+        self.pairing_file = Path(pairing_file) if pairing_file is not None else None
         self.extension_version: Optional[str] = None
         self._server: Optional[Server] = None
         self._conn: Optional[ServerConnection] = None
@@ -44,6 +107,7 @@ class BridgeServer:
         self._handlers: Dict[str, List[EventHandler]] = {}
         self._connected = asyncio.Event()
         self._tasks: set = set()
+        self._pairing_warned: set = set()
 
     @property
     def connected(self) -> bool:
@@ -122,7 +186,7 @@ class BridgeServer:
                 raise ValueError("first message must be hello")
             hello = Hello.model_validate(envelope.payload)
         except (asyncio.TimeoutError, ValueError, ValidationError, ConnectionClosed) as exc:
-            log.log(logging.DEBUG if isinstance(exc, ConnectionClosed) else logging.WARNING, "rejected bridge client: %s", exc)
+            log.log(logging.DEBUG if isinstance(exc, ConnectionClosed) else logging.WARNING, "rejected bridge client: %s", _describe_error(exc))
             await conn.close(1008, "hello expected")
             return None
         if hello.protocol != PROTOCOL_VERSION:
@@ -130,25 +194,73 @@ class BridgeServer:
             return None
         return hello
 
+    def _warn_pairing(self, reason: str) -> None:
+        if reason not in self._pairing_warned:
+            self._pairing_warned.add(reason)
+            log.warning("rejected bridge client: %s. Fix or delete the pairing file (python -m babas pair --reset)", reason)
+
+    def _check_pairing(self, hello: Hello) -> Tuple[bool, Optional[str]]:
+        path = self.pairing_file
+        if path is None:
+            return True, None
+        try:
+            raw: Optional[str] = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            raw = None
+        except (OSError, ValueError) as exc:
+            self._warn_pairing(f"pairing file unreadable ({type(exc).__name__})")
+            return False, None
+        if raw is None:
+            token = secrets.token_urlsafe(32)
+            try:
+                _write_token(path, token)
+            except OSError as exc:
+                self._warn_pairing(f"pairing file not writable ({type(exc).__name__})")
+                return False, None
+            log.info("created a new pairing")
+            return True, token
+        stored = _read_token(raw)
+        if stored is None:
+            self._warn_pairing("pairing file is corrupt")
+            return False, None
+        presented = (hello.token or "").encode("utf-8")
+        if not hmac.compare_digest(presented, stored.encode("utf-8")):
+            self._warn_pairing("extension is not paired")
+            return False, None
+        return True, None
+
     async def _handle(self, conn: ServerConnection) -> None:
         hello = await self._handshake(conn)
         if hello is None:
             return
+        accepted, new_token = self._check_pairing(hello)
+        if not accepted:
+            await conn.close(1008, NOT_PAIRED)
+            return
+        self._pairing_warned.clear()
         previous = self._conn
         self._conn = conn
         if previous is not None:
             self._fail_pending(ErrorCode.NO_EXTENSION, "The extension reconnected")
             await previous.close(1000, "replaced by a new connection")
         self.extension_version = hello.ext_version
-        await conn.send(Envelope(id=new_id(), type="welcome", payload={"server_version": __version__}).model_dump_json())
-        self._connected.set()
-        log.info("extension connected (v%s)", hello.ext_version)
+        welcome_payload: Dict[str, Any] = {"server_version": __version__}
+        if new_token is not None:
+            welcome_payload["token"] = new_token
+        welcomed = False
         try:
+            await conn.send(Envelope(id=new_id(), type="welcome", payload=welcome_payload).model_dump_json())
+            welcomed = True
+            self._connected.set()
+            log.info("extension connected (v%s)", hello.ext_version)
             async for raw in conn:
                 self._on_message(raw)
         except ConnectionClosed:
             pass
         finally:
+            if not welcomed and new_token is not None and self.pairing_file is not None:
+                with contextlib.suppress(OSError):
+                    reset_pairing(self.pairing_file)
             if self._conn is conn:
                 self._conn = None
                 self._connected.clear()

@@ -91,6 +91,7 @@ async def ext_env(pw, tmp_path):
             headless=True,
             viewport=VIEWPORT,
             args=["--disable-extensions-except=" + dist, "--load-extension=" + dist],
+            env={**os.environ, "LANGUAGE": "es_MX:es"},
         )
         if context.service_workers:
             sw = context.service_workers[0]
