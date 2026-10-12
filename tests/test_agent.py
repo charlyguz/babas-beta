@@ -250,7 +250,7 @@ class TestLoop:
     async def test_language_reaches_the_system_prompt(self):
         llm = FakeLLM([plan(done())])
         await make_agent(llm, language="es").run("t")
-        assert "Spanish (Mexico)" in llm.calls[0][0]
+        assert "usted" in llm.calls[0][0] and "Usted es BABAS" in llm.calls[0][0]
 
     async def test_default_executor_is_imported_lazily(self, monkeypatch):
         class FakeExecutor:

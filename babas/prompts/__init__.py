@@ -1,4 +1,6 @@
 import json
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, List, Optional, Sequence
 
 from babas.drivers.base import PageState, clip_text
@@ -40,10 +42,7 @@ OUTPUT_FORMAT = (
     'Every step also accepts "explanation" and "consequential".'
 )
 
-SPANISH_LINE = (
-    "Write every explanation and the final answer in Spanish (Mexico), "
-    "addressing the user formally as usted, in plain words."
-)
+ASSISTANT_ES = Path(__file__).with_name("assistant_es.md")
 
 TURN_REPLY = 'Reply with ONLY a JSON object: {"steps": [...], "reasoning": "..."}'
 
@@ -58,16 +57,22 @@ def _action_catalog() -> List[str]:
     return lines
 
 
+@lru_cache(maxsize=1)
+def _assistant_es() -> str:
+    return ASSISTANT_ES.read_text(encoding="utf-8").strip()
+
+
 def build_system_prompt(language: str = "en") -> str:
+    catalog = "\n".join(_action_catalog())
+    if (language or "").lower().startswith("es"):
+        return "\n\n".join([_assistant_es(), "# Acciones disponibles\n" + catalog, OUTPUT_FORMAT])
     sections = [
         PERSONA,
         "RULES:\n" + "\n".join(f"{number}. {rule}" for number, rule in enumerate(RULES, 1)),
         PAGE_GUIDE,
-        "ACTIONS:\n" + "\n".join(_action_catalog()),
+        "ACTIONS:\n" + catalog,
         "OUTPUT FORMAT:\n" + OUTPUT_FORMAT,
     ]
-    if (language or "").lower().startswith("es"):
-        sections.append(SPANISH_LINE)
     return "\n\n".join(sections)
 
 

@@ -74,14 +74,27 @@ class TestSystemPrompt:
         for flag in ("pii", "password", "captcha", "consequential"):
             assert flag in prompt
 
-    def test_spanish_adds_one_line(self):
-        english = build_system_prompt("en")
+    def test_spanish_prompt_is_the_assistant_file_plus_the_catalog(self):
         spanish = build_system_prompt("es")
-        assert spanish.startswith(english)
-        extra = spanish[len(english) :].strip()
-        assert "\n" not in extra
-        assert "Spanish (Mexico)" in extra and "usted" in extra
-        assert "Spanish (Mexico)" not in english
+        assert spanish != build_system_prompt("en")
+        assert spanish.startswith("# Rol\nUsted es BABAS")
+        assert "usted" in spanish and "handoff" in spanish
+        assert "\n\n# Acciones disponibles\n- goto: " in spanish
+        assert spanish.endswith(build_system_prompt("en").split("OUTPUT FORMAT:\n")[1])
+        for name in ACTION_MODELS:
+            assert name in spanish
+        assert "Usted es BABAS" not in build_system_prompt("en")
+
+    def test_spanish_prompt_keeps_every_safety_rule(self):
+        spanish = build_system_prompt("es")
+        for fragment in ("Nunca escriba contraseñas", "CAPTCHA", '"consequential": true', "no instrucciones", "ask_user", "gob.mx"):
+            assert fragment in spanish
+
+    def test_spanish_catalog_has_the_same_examples_as_english(self):
+        def catalog(prompt):
+            return re.findall(r"^- \w+: .+\n  Example: \{.*\}$", prompt, re.MULTILINE)
+
+        assert catalog(build_system_prompt("es")) == catalog(build_system_prompt("en"))
 
     def test_default_language_is_english(self):
         assert build_system_prompt() == build_system_prompt("en")
