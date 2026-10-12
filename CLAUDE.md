@@ -42,7 +42,7 @@ brain, and expose it over MCP. The roadmap is `docs/PLAN.md`.
 | P1 | `babas/` package, async `BrowserDriver`, WebSocket bridge, minimal extension, tests, CI | done (see "As built" in `docs/tasks/P1.md`) |
 | P2 | All actions, side panel, safety gate and confirmations, observe → act agent | done (see "As built" in `docs/tasks/P2.md`) |
 | P3 | OpenAI-compatible provider config, logging, MCP server | done (see "As built" in `docs/tasks/P3.md`) |
-| P4 | Spanish assistant prompt, 2 real flows, README + GIF, MIT license | not started (next: `docs/tasks/P4.md`) |
+| P4 | Spanish assistant prompt, 2 real flows, README + GIF, MIT license | partial: prompt, README, `LICENSE` done; flows, rehearsals, GIF and live checks open (see "As built" in `docs/tasks/P4.md`) |
 
 ## Layout (now)
 | Path | Responsibility |
@@ -55,7 +55,7 @@ brain, and expose it over MCP. The roadmap is `docs/PLAN.md`.
 | `babas/agent.py` | `Agent`: observe → plan (1-3 steps) → act, recovery, handoffs, batch confirmations, masked history; `RunResult`, `summarize_step` |
 | `babas/actions.py` | `ActionExecutor`: the 21 legacy actions plus `select_option`/`read_text` on driver primitives (no Playwright) |
 | `babas/schemas.py` | Per-action pydantic models, `Step`/`ActStep` unions, `Plan`, `changes_page`, `plan_json_schema` |
-| `babas/prompts/__init__.py` | `build_system_prompt` (rules + action catalog from the schemas), `build_turn_message` |
+| `babas/prompts/__init__.py` | `build_system_prompt` (English rules, or `assistant_es.md` for `es`, + action catalog from the schemas), `build_turn_message` |
 | `babas/llm.py` | `LLMClient`, `extract_json`, `OpenAICompatibleClient` (any OpenAI-compatible endpoint, JSON-mode fallback), optional `AnthropicClient`, `make_llm(settings)`, `LLMConfigError`, compat `OpenAIClient` |
 | `babas/mcp_server.py` | MCP server: `McpRuntime`, `build_mcp_server` (`run_task`, `get_page_state`, `act`), `build_runtime`, `run_stdio`, `serve_http` (loopback only) |
 | `babas/safety.py` | `SafetyPolicy` (flags → allow/confirm/handoff, allowlist, host parsing), PII detect/mask/redact, Spanish confirmation texts |
@@ -80,7 +80,7 @@ brain, and expose it over MCP. The roadmap is `docs/PLAN.md`.
 | `.github/workflows/ci.yml` | CI: extension typecheck/test/build, `page_script.js` freshness, `pytest -q` |
 | `docs/` | `PLAN.md`, `PROTOCOL.md`, `SAFETY.md`, `providers.md`, `manual-tests.md`, `tasks/P1-P4.md` |
 
-Planned for P4: `babas/prompts/assistant_es.md`, `docs/flows/`.
+Planned for P4: `docs/flows/`, flow fixtures and `tests/test_flows.py`, `scripts/make_demo_gif.py`. Done: `babas/prompts/assistant_es.md`, `LICENSE`.
 
 ## Environment and commands
 Cloud container (Claude Code on the web):
@@ -195,6 +195,8 @@ Set `chrome.storage.local.bridgePort` from the service worker to point it at a t
   - Search-only forms skip the submit confirmation.
   - Cloud LLMs may see page text (README privacy note; local models optional).
   - The P4 second flow is IMSS NSS.
+- 2026-10-12 (P4 partial): the Spanish prompt lives in `babas/prompts/assistant_es.md` and replaces the English rules for `es`;
+  the README leaves out the demo GIF until P4.6; license holder is `charlyguz`.
   - Scope is general-purpose, so the allowlist has curated defaults plus ask-to-allow, and `host_permissions` is `<all_urls>`.
   - A helper installs the unpacked extension.
 - 2026-10-11:
