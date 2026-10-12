@@ -1,23 +1,29 @@
 import asyncio
+import importlib
 import json
 import logging
 import os
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from types import ModuleType
+from typing import Any, List, Optional
 
-from babas.bridge.server import BridgeServer, default_pairing_file
+from babas.bridge.server import BridgeServer
+from babas.config import Settings
 from babas.drivers.base import BrowserDriver, DriverError, Element, Target
 from babas.drivers.extension_driver import ExtensionDriver
 from babas.logs import setup_logging
-from babas.safety import SafetyPolicy
+from babas.safety import SafetyPolicy, redact
 
 log = logging.getLogger("babas.devrepl")
 
 PROMPT = "babas> "
 WATCH_INTERVAL = 0.2
 DEFAULT_SCROLL = 500
+MCP_START_GRACE_S = 0.2
+MCP_EXTRA_HINT = "Install the MCP extra: pip install 'babas[mcp]'"
 
 HELP_LINES = [
     "COMMANDS:",
@@ -77,11 +83,11 @@ def _escape_newlines(text: str) -> str:
 
 
 def _format_element(el: Element) -> str:
-    line = f'[{el.index}] {el.role} "{_one_line(el.label)}"'
+    line = f'[{el.index}] {el.role} "{redact(_one_line(el.label))}"'
     if el.flags:
         line += " {" + ",".join(el.flags) + "}"
     if el.value:
-        line += f" = {_escape_newlines(el.value)}"
+        line += f" = {redact(_escape_newlines(el.value))}"
     return line
 
 
@@ -121,12 +127,12 @@ class _Session:
             await _ensure_started(self.driver)
             await self._dispatch(cmd, line.lstrip())
         except DriverError as exc:
-            print(f"   ERROR {exc.code}: {exc.message}")
+            print(f"   ERROR {exc.code}: {redact(exc.message)}")
             if exc.data:
-                print(f"   data: {json.dumps(exc.data, ensure_ascii=False, default=str)}")
+                print(f"   data: {redact(json.dumps(exc.data, ensure_ascii=False, default=str))}")
         except Exception as exc:
             log.exception("repl command failed: %s", cmd)
-            print(f"   ERROR INTERNAL: {type(exc).__name__}: {exc}")
+            print(f"   ERROR INTERNAL: {type(exc).__name__}: {redact(str(exc))}")
         return True
 
     def _need_snapshot(self) -> bool:
@@ -147,8 +153,8 @@ class _Session:
         if cmd == "ls":
             state = await driver.get_page_state(highlight=True)
             self.snapshot_id = state.snapshot_id
-            print(f"URL: {state.url}")
-            print(f"TITLE: {state.title}")
+            print(f"URL: {redact(state.url)}")
+            print(f"TITLE: {redact(state.title)}")
             for el in state.elements:
                 print(_format_element(el))
         elif cmd == "click":
@@ -168,7 +174,7 @@ class _Session:
                     await driver.type_text(self.target(index), pieces[2])
                     print("   OK")
                 else:
-                    print(f"   Selected: {await driver.select_option(self.target(index), pieces[2])}")
+                    print(f"   Selected: {redact(str(await driver.select_option(self.target(index), pieces[2])))}")
         elif cmd == "press":
             if len(args) not in (1, 2):
                 return self._usage("press KEY [N]")
@@ -191,12 +197,12 @@ class _Session:
                 return self._usage("read [N]")
             if index is not None and not self._need_snapshot():
                 return
-            print(await driver.read_text(self.target(index) if index is not None else None))
+            print(redact(await driver.read_text(self.target(index) if index is not None else None)))
         elif cmd == "goto":
             if len(args) != 1:
                 return self._usage("goto URL")
             await driver.goto(args[0])
-            print(f"   URL: {await driver.current_url()}")
+            print(f"   URL: {redact(await driver.current_url())}")
         elif cmd == "hl":
             if len(args) != 1 or args[0].lower() not in ("all", "off"):
                 return self._usage("hl all|off")
@@ -233,7 +239,7 @@ class _Session:
             await asyncio.to_thread(Path(filename).write_bytes, png)
             print(f"   Saved: {filename}")
         else:
-            print(f"   Unknown command '{cmd}'. Type help to see the commands.")
+            print(f"   Unknown command '{redact(cmd)}'. Type help to see the commands.")
 
 
 async def repl(driver: BrowserDriver, bridge: BridgeServer) -> None:
@@ -287,36 +293,116 @@ def _pairing_problem(path: Path) -> Optional[str]:
     return None
 
 
-async def run_serve(host: str, port: int, repl: bool) -> None:
-    setup_logging("WARNING" if repl else "INFO")
-    pairing_file = default_pairing_file()
+def import_mcp_server() -> ModuleType:
+    try:
+        return importlib.import_module("babas.mcp_server")
+    except ImportError as exc:
+        if (exc.name or "mcp").split(".")[0] != "mcp":
+            raise
+        print(MCP_EXTRA_HINT, file=sys.stderr)
+        raise SystemExit(1) from None
+
+
+def _key_note(settings: Settings) -> Optional[str]:
+    fallback = "ANTHROPIC_API_KEY" if settings.llm_provider == "anthropic" else "OPENAI_API_KEY"
+    missing: List[str] = []
+    if settings.needs_api_key and not settings.llm_api_key:
+        missing.append(f"BABAS_LLM_API_KEY (or {fallback})")
+    if not settings.llm_model:
+        missing.append("BABAS_LLM_MODEL")
+    if not missing:
+        return None
+    verb, then = ("is", "it is") if len(missing) == 1 else ("are", "they are")
+    return f"Note: {' and '.join(missing)} {verb} not set, so tasks from the side panel will fail until {then}."
+
+
+async def _close_quietly(obj: Any) -> None:
+    close = getattr(obj, "close", None)
+    if close is None:
+        return
+    try:
+        await close()
+    except Exception as exc:
+        log.debug("close failed: %s", type(exc).__name__)
+
+
+async def run_serve(settings: Settings, repl: bool = False, mcp_http: bool = False) -> None:
+    if repl and mcp_http:
+        print("--mcp-http cannot be combined with --repl", file=sys.stderr)
+        raise SystemExit(2)
+    setup_logging("WARNING" if repl else settings.log_level)
+    mcp_module = import_mcp_server() if mcp_http else None
+    pairing_file = settings.pairing_file
     problem = _pairing_problem(pairing_file)
     if problem:
         print(problem)
         raise SystemExit(1)
-    bridge = BridgeServer(host, port, pairing_file=pairing_file)
+    bridge = BridgeServer(
+        settings.bridge_host, settings.bridge_port, list(settings.extension_origins), pairing_file=pairing_file
+    )
     try:
         await bridge.start()
     except OSError as exc:
-        print(f"Could not listen on {host}:{port}: {exc}")
+        print(f"Could not listen on {settings.bridge_host}:{settings.bridge_port}: {exc}")
         raise SystemExit(1) from None
-    print(f"BABAS bridge on ws://{host}:{bridge.port} — waiting for the extension…")
+    print(f"BABAS bridge on ws://{settings.bridge_host}:{bridge.port} — waiting for the extension…")
     print(f"Pairing file: {pairing_file}")
     watcher = asyncio.get_running_loop().create_task(_watch_connection(bridge))
     session: Any = None
+    runtime: Any = None
+    mcp_task: Optional["asyncio.Task[None]"] = None
     try:
         if repl:
             await _run_repl(ExtensionDriver(bridge), bridge)
         else:
-            from babas.llm import OpenAIClient
+            from babas.llm import make_llm
             from babas.session import Session
 
-            if not os.environ.get("OPENAI_API_KEY"):
-                print("Note: OPENAI_API_KEY is not set, so tasks from the side panel will fail until it is.")
-            session = Session(bridge, lambda: OpenAIClient(), SafetyPolicy.from_env())
-            await asyncio.Event().wait()
+            note = _key_note(settings)
+            if note:
+                print(note)
+            session = Session(
+                bridge,
+                lambda: make_llm(settings),
+                SafetyPolicy(settings.allowed_domains),
+                language=settings.language,
+                max_steps=settings.max_steps,
+                max_retries=settings.max_retries,
+            )
+            if mcp_module is None:
+                await asyncio.Event().wait()
+            else:
+                runtime = mcp_module.build_runtime(settings, bridge, busy=lambda: session.running)
+                runtime.attach(bridge, panel_tasks=False)
+                session.busy = lambda: runtime.lock.locked()
+                mcp_task = asyncio.get_running_loop().create_task(
+                    mcp_module.serve_http(runtime, "127.0.0.1", settings.mcp_http_port)
+                )
+                await asyncio.wait({mcp_task}, timeout=MCP_START_GRACE_S)
+                if not mcp_task.done():
+                    print(f"MCP over HTTP: http://127.0.0.1:{settings.mcp_http_port}/mcp")
+                await _wait_for_mcp(mcp_task)
     finally:
         watcher.cancel()
+        if mcp_task is not None and not mcp_task.done():
+            mcp_task.cancel()
+        if mcp_task is not None:
+            await asyncio.gather(mcp_task, return_exceptions=True)
         if session is not None:
             await session.stop()
         await bridge.stop()
+        if runtime is not None:
+            await _close_quietly(runtime.llm)
+
+
+async def _wait_for_mcp(task: "asyncio.Task[None]") -> None:
+    try:
+        await task
+    except OSError as exc:
+        print(f"Could not start the MCP HTTP endpoint: {exc.strerror or type(exc).__name__}")
+        raise SystemExit(1) from None
+    except Exception as exc:
+        log.error("the MCP HTTP endpoint failed: %s", type(exc).__name__)
+        print(f"The MCP HTTP endpoint failed ({type(exc).__name__}).")
+        raise SystemExit(1) from None
+    print("The MCP HTTP endpoint stopped.")

@@ -8,12 +8,12 @@ import threading
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
-from dotenv import load_dotenv
 from playwright.async_api import Page, Playwright, async_playwright
 
 from babas import voice
 from babas.agent import Agent, RunResult
 from babas.channels import ConsoleChannel
+from babas.config import Settings
 from babas.debug import cleanup_temp_dir, get_temp_debug_dir
 from babas.drivers.playwright_driver import (
     PlaywrightDriver,
@@ -23,7 +23,8 @@ from babas.drivers.playwright_driver import (
     try_launch_and_connect,
 )
 from babas.gate import SafeDriver
-from babas.llm import OpenAIClient
+from babas.llm import make_llm
+from babas.logs import setup_logging
 from babas.safety import SafetyPolicy, redact
 
 HACKER_PHRASES = [
@@ -50,7 +51,15 @@ _input_pending = threading.Event()
 _pending_read: Optional["asyncio.Future[str]"] = None
 
 STOP_POLL_S = 0.3
-MISSING_KEY_MESSAGE = "Error: OPENAI_API_KEY is not set. Put it in .env or the environment."
+
+
+def preflight_problem(settings: Settings) -> Optional[str]:
+    if settings.needs_api_key and not settings.llm_api_key:
+        fallback = "ANTHROPIC_API_KEY" if settings.llm_provider == "anthropic" else "OPENAI_API_KEY"
+        return f"Error: BABAS_LLM_API_KEY (or {fallback}) is not set. Put it in .env or the environment."
+    if not settings.llm_model:
+        return "Error: BABAS_LLM_MODEL is not set. Put it in .env or the environment."
+    return None
 
 
 def _start_read(prompt: str) -> "asyncio.Future[str]":
@@ -153,7 +162,7 @@ async def run_hacker_mode(page: Page, butler: Any = None) -> None:
             butler.say(success_phrase)
         await asyncio.sleep(2)
     except Exception as e:
-        print(f"   Error in hacker mode: {e}")
+        print(f"   Error in hacker mode: {redact(str(e))}")
         if butler and butler.enabled:
             butler.say("We've been detected sir. Aborting mission.")
 
@@ -176,7 +185,7 @@ async def select_session_mode(playwright: Playwright) -> Tuple[str, dict, Any]:
             print(f"   Connected! {len(pages)} tabs")
             return "connect", {"port": port}, browser
         except Exception as e:
-            print(f"   Error connecting: {e}")
+            print(f"   Error connecting: {redact(str(e))}")
     print("\nWhich browser to use?\n")
     if preferred:
         print(f"  [ENTER] {preferred.capitalize()} (recommended)")
@@ -277,14 +286,25 @@ async def run_task(
     text: str,
     voice_gui: Any = None,
     butler: Any = None,
+    *,
+    settings: Settings,
 ) -> Optional[RunResult]:
-    if not os.environ.get("OPENAI_API_KEY"):
-        print(MISSING_KEY_MESSAGE)
-        _gui_result(voice_gui, "Error", "#ff4757", MISSING_KEY_MESSAGE)
+    problem = preflight_problem(settings)
+    if problem:
+        print(problem)
+        _gui_result(voice_gui, "Error", "#ff4757", problem)
         return None
     channel = ConsoleChannel(voice_gui, ainput=_ainput)
-    llm = OpenAIClient()
-    agent = Agent(SafeDriver(driver, policy, channel), llm, channel, language="en", on_event=_make_printer(voice_gui))
+    llm = make_llm(settings)
+    agent = Agent(
+        SafeDriver(driver, policy, channel),
+        llm,
+        channel,
+        language=settings.language,
+        max_steps=settings.max_steps,
+        max_retries=settings.max_retries,
+        on_event=_make_printer(voice_gui),
+    )
     if voice_gui is not None:
         voice_gui.set_status("Executing...", "#ff9f43")
         voice_gui.show_message(f'Executing...\n(Press STOP to cancel)\n\n"{redact(text)[:50]}"')
@@ -352,7 +372,7 @@ def show_help() -> None:
     print('   "search two sum on leetcode"')
 
 
-async def amain() -> None:
+async def amain(settings: Settings) -> None:
     print("\n" + "="*60)
     print("STARTING BABAS SYSTEM...")
     print("="*60)
@@ -436,7 +456,7 @@ async def amain() -> None:
                     initial_page = await context.new_page()
             driver = PlaywrightDriver(context, initial_page, attached=is_connected, browser=browser)
             await driver.start()
-            policy = SafetyPolicy.from_env()
+            policy = SafetyPolicy(settings.allowed_domains)
             print("\n" + "="*60)
             print("READY!")
             print("="*60)
@@ -462,10 +482,10 @@ async def amain() -> None:
                             if butler and butler.enabled:
                                 butler.goodbye()
                             break
-                        print(f"\nCommand: \"{voice_command}\"")
+                        print(f"\nCommand: \"{redact(voice_command)}\"")
                         user_input = voice_command
                         if butler and butler.enabled:
-                            butler.say(f"Understood: {voice_command[:30]}")
+                            butler.say(f"Understood: {redact(voice_command)[:30]}")
                     else:
                         print("\nWhat would you like to do? (or 'exit')")
                         user_input = (await _ainput(">>> ")).strip()
@@ -488,7 +508,7 @@ async def amain() -> None:
                             page = driver.get_tab_page(name)
                             marker = "->" if name == driver.current_tab else "  "
                             try:
-                                title = (await page.title())[:40] or page.url[:40]
+                                title = redact(await page.title() or page.url)[:40]
                                 print(f"   {marker} [{name}] {title}")
                             except Exception:
                                 print(f"   {marker} [{name}] (error)")
@@ -519,7 +539,7 @@ async def amain() -> None:
                     print()
                     gui = voice_gui if (use_voice_mode and voice_gui and voice_gui.is_open) else None
                     try:
-                        await run_task(driver, policy, user_input, gui, butler)
+                        await run_task(driver, policy, user_input, gui, butler, settings=settings)
                     except Exception as e:
                         print(f"\nError: {redact(str(e))}")
                         _gui_result(gui, "Error", "#ff4757", f"Error: {redact(str(e))}")
@@ -545,17 +565,23 @@ async def amain() -> None:
             print("   Session ended")
             voice.shutdown_butler()
     except Exception as e:
-        print(f"\nFatal error: {e}")
+        print(f"\nFatal error: {redact(str(e))}")
         cleanup_temp_dir()
         voice.shutdown_butler()
         raise
 
 
-def main() -> None:
+def main(settings: Optional[Settings] = None) -> None:
     print("Loading environment...")
-    load_dotenv()
+    if settings is None:
+        try:
+            settings = Settings.from_env()
+        except ValueError as exc:
+            print(f"Invalid configuration: {exc}", file=sys.stderr)
+            raise SystemExit(2) from None
+    setup_logging(settings.log_level)
     try:
-        asyncio.run(amain())
+        asyncio.run(amain(settings))
     except KeyboardInterrupt:
         print("\nCancelled")
         cleanup_temp_dir()
