@@ -14,7 +14,7 @@ interfaces, verification commands and commit points. The specs are `docs/PROTOCO
 |---|---|---|
 | P1 | done | Package split, `PlaywrightDriver`, `ExtensionDriver`, bridge, `serve --repl`, 169 vitest + 79 pytest tests, CI workflow (green on `dcac297`). See "As built" in `docs/tasks/P1.md`. Not done: independent code review of P1 (started, then stopped). Next: P2 |
 | P2 | done | Action union, LLM seam, safety core, channels, `SafeDriver` gate, actions on primitives, observe → act `Agent`, SW enforcement (approvals, Stop, allowlist, pairing), Spanish side panel, `Session`, `serve`/`pair`/CLI on the new agent; 386 vitest + 967 pytest (75 e2e) green. See "As built" in `docs/tasks/P2.md`. Not done: real LLM/site runs (manual: `docs/manual-tests.md`), independent review. Next: P3 |
-| P3 | not started | |
+| P3 | done | `Settings` from the environment, `OpenAICompatibleClient` (JSON-mode fallback) + optional `AnthropicClient` + `make_llm`, MCP server (`run_task`, `get_page_state`, `act`) over stdio and loopback-only streamable HTTP behind the same gate, entry points on `Settings` (`mcp`, `serve --mcp-http`), `docs/providers.md`. See "As built" in `docs/tasks/P3.md`. Not done: runs against real providers or MCP clients. Next: P4 |
 | P4 | not started | Live flows need the user (P4.7) |
 
 ## Decisions (answered 2026-10-11)

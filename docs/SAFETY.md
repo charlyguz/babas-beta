@@ -118,6 +118,13 @@ listing every value. Steps that need no confirmation run without a token.
   immediately before the page action (after re-checking Stop and the allowlist on the fresh URL).
 - The Python gate keeps its own 120 s ledger of granted approvals; an unknown `confirmation=` never skips a prompt.
 
+### MCP (P3)
+- `run_task`, `get_page_state` and `act` use the same `SafeDriver`, `SafetyPolicy` and `PanelChannel` as the side panel:
+  no tool or argument can confirm, allow a site or skip a handoff; a refusal is a tool error.
+- `get_page_state` masks element values with `redact` and never returns password values; `run_task` masks its answer.
+- The HTTP endpoint is loopback-only (Host and Origin checked) and has no authentication: it must never be exposed.
+- Stop in the panel cancels a running `run_task` and leaves the extension halted until Resume.
+
 ## 5. Handoffs (texts, Spanish)
 - Password or login: "Por seguridad, BABAS no escribe contraseñas. Escriba su contraseña directamente en la página y luego presione «Listo»."
 - CAPTCHA: "La página pide comprobar que usted es una persona. Resuélvalo en la página y luego presione «Listo»."

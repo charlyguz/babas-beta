@@ -41,27 +41,29 @@ brain, and expose it over MCP. The roadmap is `docs/PLAN.md`.
 |---|---|---|
 | P1 | `babas/` package, async `BrowserDriver`, WebSocket bridge, minimal extension, tests, CI | done (see "As built" in `docs/tasks/P1.md`) |
 | P2 | All actions, side panel, safety gate and confirmations, observe → act agent | done (see "As built" in `docs/tasks/P2.md`) |
-| P3 | OpenAI-compatible provider config, logging, MCP server | not started (next: `docs/tasks/P3.md`) |
-| P4 | Spanish assistant prompt, 2 real flows, README + GIF, MIT license | not started |
+| P3 | OpenAI-compatible provider config, logging, MCP server | done (see "As built" in `docs/tasks/P3.md`) |
+| P4 | Spanish assistant prompt, 2 real flows, README + GIF, MIT license | not started (next: `docs/tasks/P4.md`) |
 
 ## Layout (now)
 | Path | Responsibility |
 |---|---|
 | `babas_voice.py` / `babas_listen.py` / `babas_gui.py` | Optional ElevenLabs "butler" TTS / mic + Whisper (`language="en"`) / customtkinter control panel (CLI only). Loaded lazily through `babas/voice.py` |
-| `babas/__main__.py` | `python -m babas [cli\|serve\|pair]` (argparse; no subcommand = `cli`; `pair [--reset]` shows/removes the pairing file) |
+| `babas/__main__.py` | `python -m babas [cli\|serve\|mcp\|pair]` (argparse; no subcommand = `cli`; `serve [--host --port --repl --mcp-http]`; builds one `Settings` per command; `pair [--reset]`) |
+| `babas/config.py` | `Settings.from_env()`: LLM provider/base URL/key/model/JSON mode/timeout, allowed domains, limits, language, bridge, `BABAS_HOME`, MCP port, log level (all `BABAS_*` variables: `docs/providers.md`) |
 | `babas/cli.py` | Console agent: browser/session selection, voice mode, hacker easter egg, runs the `Agent` with console confirmations (SIGINT cancels the run), private `_ainput` |
 | `babas/session.py` | `Session`: side-panel tasks (`task.start`/`run.stop` events) → `Agent` over `SafeDriver(ExtensionDriver)` + `PanelChannel`; Stop cancels the run |
 | `babas/agent.py` | `Agent`: observe → plan (1-3 steps) → act, recovery, handoffs, batch confirmations, masked history; `RunResult`, `summarize_step` |
 | `babas/actions.py` | `ActionExecutor`: the 21 legacy actions plus `select_option`/`read_text` on driver primitives (no Playwright) |
 | `babas/schemas.py` | Per-action pydantic models, `Step`/`ActStep` unions, `Plan`, `changes_page`, `plan_json_schema` |
 | `babas/prompts/__init__.py` | `build_system_prompt` (rules + action catalog from the schemas), `build_turn_message` |
-| `babas/llm.py` | `LLMClient` protocol, `extract_json`, lazy `OpenAIClient` (P3 generalizes) |
+| `babas/llm.py` | `LLMClient`, `extract_json`, `OpenAICompatibleClient` (any OpenAI-compatible endpoint, JSON-mode fallback), optional `AnthropicClient`, `make_llm(settings)`, `LLMConfigError`, compat `OpenAIClient` |
+| `babas/mcp_server.py` | MCP server: `McpRuntime`, `build_mcp_server` (`run_task`, `get_page_state`, `act`), `build_runtime`, `run_stdio`, `serve_http` (loopback only) |
 | `babas/safety.py` | `SafetyPolicy` (flags → allow/confirm/handoff, allowlist, host parsing), PII detect/mask/redact, Spanish confirmation texts |
 | `babas/gate.py` | `SafeDriver`: wraps any `BrowserDriver`; confirmations, batch approval, handoffs, domain prompts; `ActionDenied`, `HandoffRequired` |
 | `babas/channels.py` | `UserChannel` implementations: `ConsoleChannel`, `DenyChannel`, `PanelChannel` (bridge `ui.*` requests) |
 | `babas/logs.py` | `RedactingFilter`, `setup_logging` (stderr) |
 | `babas/voice.py` / `babas/debug.py` | Lazy loaders for the optional voice modules (silent import) / temp debug dir and error screenshots |
-| `babas/devrepl.py` | `serve` (bridge + pairing file + `Session`, or `--repl`: developer console `ls`, `click N`, `type N text`, `help`) |
+| `babas/devrepl.py` | `run_serve(settings, repl, mcp_http)`: bridge + pairing file + `Session` (+ MCP HTTP), or `--repl`: developer console `ls`, `click N`, `type N text`, `help` |
 | `babas/drivers/base.py` | `BrowserDriver` ABC, `Target`, `Element`, `PageState` (+`to_prompt`), `DriverError`, `ErrorCode`, flag names |
 | `babas/drivers/playwright_driver.py` | `PlaywrightDriver` (`page_script.js` for snapshots, native Playwright input), browser discovery/launch/CDP helpers |
 | `babas/drivers/extension_driver.py` | `ExtensionDriver`: every method is one bridge request; `act_payload` builds every `page.act` |
@@ -74,11 +76,11 @@ brain, and expose it over MCP. The roadmap is `docs/PLAN.md`.
 | `extension/src/background/` | SW: `bridge.ts` (WS client), `tabs.ts` (inject, settle, navigate, `prepare` hook), `scope.ts` (working tab, adoption, tab group), `state.ts` (storage, atomic approvals), `policy.ts` (pure: allowlist, digest, texts), `ui.ts` (panel ports, pending requests, badge), `service-worker.ts` (handlers) |
 | `extension/sidepanel.html`, `extension/src/sidepanel/` | Side panel: `model` (pure reducer), `view` (DOM, `textContent` only), `connection` (port + backoff), `i18n`, `main` |
 | `extension/scripts/make_icons.py` | Regenerates `public/icons/*.png` |
-| `tests/` | `conftest.py` (fixtures: `pages_url`, `pw`, `playwright_driver`, `ext_env`, `extension_driver`, `driver`, `fake_llm`, `session`, `panel`, ...), `helpers.py` (`FakeLLM`, `FakeDriver`, `RecordingChannel`, `FakeBridge`), unit tests per module, `e2e/` (contract on both drivers, reconnect, panel, safety), `fixtures/{pages,protocol,pii_cases.json}` |
+| `tests/` | `fake_openai_server.py` (fake provider over HTTP), `conftest.py` (fixtures: `pages_url`, `pw`, `playwright_driver`, `ext_env`, `extension_driver`, `driver`, `fake_llm`, `session`, `panel`, ...), `helpers.py` (`FakeLLM`, `FakeDriver`, `RecordingChannel`, `FakeBridge`), unit tests per module, `e2e/` (contract on both drivers, reconnect, panel, safety), `fixtures/{pages,protocol,pii_cases.json}` |
 | `.github/workflows/ci.yml` | CI: extension typecheck/test/build, `page_script.js` freshness, `pytest -q` |
-| `docs/` | `PLAN.md`, `PROTOCOL.md`, `SAFETY.md`, `manual-tests.md`, `tasks/P1-P4.md` |
+| `docs/` | `PLAN.md`, `PROTOCOL.md`, `SAFETY.md`, `providers.md`, `manual-tests.md`, `tasks/P1-P4.md` |
 
-Planned for P3: `babas/{config,mcp_server}.py` (+ generalizing `llm.py`), `docs/providers.md`. P4: `babas/prompts/assistant_es.md`, `docs/flows/`.
+Planned for P4: `babas/prompts/assistant_es.md`, `docs/flows/`.
 
 ## Environment and commands
 Cloud container (Claude Code on the web):
@@ -91,10 +93,10 @@ pip install "playwright==1.56.0" && pip install -e '.[dev]'
 (cd extension && npm ci && npm run typecheck && npm test && npm run build)   # build also regenerates babas/drivers/page_script.js
 pytest -q                          # unit + e2e (~2 min); e2e needs extension/dist (skips otherwise), BABAS_EXT_DIST overrides it
 python -m babas                    # console agent (needs OPENAI_API_KEY in .env)
-python -m babas serve              # side panel tasks: load extension/dist, click the BABAS icon (add --mcp-http in P3)
+python -m babas serve              # side panel tasks: load extension/dist, click the BABAS icon (add --mcp-http for MCP at http://127.0.0.1:8766/mcp)
 python -m babas serve --repl       # developer console through the extension (no AI)
 python -m babas pair [--reset]     # show / remove the pairing file (~/.babas/pairing.json)
-python -m babas mcp                # MCP over stdio (after P3)
+python -m babas mcp                # MCP over stdio (needs the extra: pip install -e '.[mcp]')
 ```
 To load the extension by hand: `chrome://extensions` → Developer mode → Load unpacked → `extension/dist` (always after a
 full `npm run build`). Then click the BABAS icon to open the side panel. Tests load it with Playwright:
@@ -116,6 +118,8 @@ Set `chrome.storage.local.bridgePort` from the service worker to point it at a t
   vitest 3.2.7, typescript 5.9.3, happy-dom 20.14.5, @types/chrome 0.1.43.
 - User-facing text (side panel, `ui.log`, confirmation and handoff texts, final answers) is es-MX, plain language,
   "usted", no jargon. Developer-facing text (CLI, logs, errors, code) is English. Panel strings live in `_locales`.
+- Configuration comes from `Settings.from_env()` (built once per entry point and passed down), never from scattered
+  `os.getenv` reads; `docs/providers.md` lists every variable.
 - Secrets only in `.env`. Never log or persist passwords; PII is masked by `redact()` everywhere except the
   confirmation card.
 - Tests: pytest (`asyncio_mode=auto`) and vitest; browser tests carry the `e2e` marker. Every safety rule has a test (`docs/SAFETY.md` §7).
@@ -177,6 +181,12 @@ Set `chrome.storage.local.bridgePort` from the service worker to point it at a t
   apply while the storage key is unset (an install-time write raced with test setup).
 - The agent redacts `ask_user` answers that look like PII in its history, so the LLM cannot type them (P4.2 needs a
   placeholder mechanism). Tabs opened by pages (`target=_blank`) are outside the BABAS tab set.
+- MCP stdio: stdout is the protocol channel, so nothing on the `mcp` path may print (logs go to stderr). `MCPServer(...)`
+  installs a root log handler that duplicates every log line; `build_mcp_server` removes it. The HTTP endpoint is
+  loopback-only with Host/Origin checks (it has no authentication): never bind it elsewhere.
+- Provider quirks: some OpenAI-compatible servers reject `json_schema`/`json_object` (auto mode falls back on HTTP 400/422
+  only), wrap JSON in fences or `<think>` blocks (`extract_json` handles both). `make_llm` never raises for a missing key:
+  the first call raises `LLMConfigError`, which `Session` and the MCP runtime report per task.
 - CDP mode uses a separate BABAS profile because Chrome 136+ refuses to debug the default one. That is why the extension exists.
 
 ## Decisions log
@@ -204,3 +214,8 @@ Set `chrome.storage.local.bridgePort` from the service worker to point it at a t
   - The Python gate is stricter too (single-character `press` = typing, non-http(s) URLs refused, hardened host parsing).
   - An explicit `screenshot` action writes `screenshot_*.png` to the working directory (SAFETY.md §6 clarified).
   - P2 was committed locally first (the user asked for no push, PR or CI wait), then pushed on request.
+- 2026-10-12 (P3 implementation):
+  - `BABAS_ALLOWED_DOMAINS` extends the default allowlist (`*` = all); the extension still enforces its own list.
+  - `make_llm` is lazy about configuration errors (per-task `LLMConfigError`), so MCP servers and `serve` always start.
+  - The MCP HTTP transport is loopback-only with DNS-rebinding protection and runs its own uvicorn server.
+  - `act` over MCP refuses element indices before a `get_page_state`; `run_task` and `get_page_state` mask personal data.

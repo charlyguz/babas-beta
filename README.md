@@ -72,6 +72,26 @@ CAPTCHAs are always left to you, and the red Stop button always works.
 Developer console without the AI: `python -m babas serve --repl` (`goto URL`, `ls`, `click N`, `type N text`, `help`).
 Manual checklist per site: `docs/manual-tests.md`.
 
+## Choose your AI provider
+
+OpenAI by default. Any OpenAI-compatible service works by setting three variables in `.env`: `BABAS_LLM_BASE_URL`,
+`BABAS_LLM_API_KEY` and `BABAS_LLM_MODEL` (OpenRouter, DeepSeek, Groq, Qwen, Ollama, LM Studio, ...), or
+`BABAS_LLM_PROVIDER=anthropic` for Claude. Local models keep your pages on your computer. Table of providers, JSON modes
+and every setting: [`docs/providers.md`](docs/providers.md).
+
+## Use BABAS from other AI apps (MCP)
+
+BABAS is also an MCP server (`run_task`, `get_page_state`, `act`), so Claude Code, Claude Desktop, Cursor or any MCP client
+can browse with your real Chrome. Confirmations still appear in the BABAS side panel and cannot be skipped.
+
+```bash
+pip install -e '.[mcp]'
+claude mcp add babas -- /path/to/.venv/bin/python -m babas mcp      # stdio
+python -m babas serve --mcp-http                                     # or HTTP: http://127.0.0.1:8766/mcp
+```
+
+Setup for Claude Desktop and Cursor, the HTTP endpoint and limits: [`docs/providers.md`](docs/providers.md).
+
 Tests: `pip install -e '.[dev]' && pytest -q` and `cd extension && npm test`.
 
 ## Voice Mode
