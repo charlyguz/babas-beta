@@ -81,8 +81,14 @@ async def playwright_driver(pw):
         await browser.close()
 
 
+@pytest.fixture
+def chromium_extra_args():
+    # Override in a test module (or indirectly parametrize it) to give ext_env extra Chromium flags.
+    return []
+
+
 @pytest_asyncio.fixture
-async def ext_env(pw, tmp_path):
+async def ext_env(pw, tmp_path, chromium_extra_args):
     if not (EXTENSION_DIST / "manifest.json").is_file():
         pytest.skip("extension/dist/manifest.json is missing: run `cd extension && npm ci && npm run build` first")
     dist = str(EXTENSION_DIST)
@@ -95,7 +101,7 @@ async def ext_env(pw, tmp_path):
             channel="chromium",
             headless=True,
             viewport=VIEWPORT,
-            args=["--disable-extensions-except=" + dist, "--load-extension=" + dist],
+            args=["--disable-extensions-except=" + dist, "--load-extension=" + dist, *chromium_extra_args],
             env={**os.environ, "LANGUAGE": "es_MX:es"},
         )
         if context.service_workers:
