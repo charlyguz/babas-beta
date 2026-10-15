@@ -823,7 +823,7 @@ async def test_console_confirm_shows_the_full_value_but_redacts_the_explanation(
     assert f"Escribir «{CURP}» en «CURP» (gob.mx)" in out
     assert "Escribir datos personales" in out
     assert "GO**************09" in out and out.count(CURP) == 1
-    assert prompts == ["Continue? (y/N): "]
+    assert prompts == ["❯ Continue? (y/N): "]
 
 
 @pytest.mark.parametrize("answer,approved", [("y", True), ("Y", True), (" yes ", True), ("s", True), ("sí", True), ("si", True), ("n", False), ("", False), ("ok", False), ("claro", False)])
@@ -852,7 +852,8 @@ async def test_console_ask_and_handoff(capsys):
     assert await channel.ask("x", "handoff") == "listo"
     out = capsys.readouterr().out
     assert CURP not in out and "GO**************09" in out
-    assert prompts[1] == "Press Enter when you are done… "
+    assert prompts[0] == "❯ "
+    assert prompts[1] == "❯ Press Enter when you are done… "
 
 
 async def test_console_allow_site():
@@ -861,7 +862,7 @@ async def test_console_allow_site():
     assert await channel.allow_site("example.com", "https://example.com/") is True
     assert await channel.allow_site("example.com", "https://example.com/") is False
     assert await channel.allow_site("example.com", "https://example.com/") is False
-    assert prompts[0] == "Allow BABAS to use example.com? (y/N): "
+    assert prompts[0] == "❯ Allow BABAS to use example.com? (y/N): "
 
 
 async def test_console_log_goes_through_redact(capsys):
@@ -876,8 +877,9 @@ async def test_console_log_goes_through_redact(capsys):
     out = capsys.readouterr().out
     assert CURP not in out
     assert "BABAS: Voy a escribir GO**************09" in out
-    assert "[ok] Escribió GO**************09" in out and "[failed] Falló" in out
-    assert "=> Listo" in out and "Error: Algo salió mal" in out
+    assert "✓ Escribió GO**************09" in out and "✗ Falló" in out
+    assert "Respuesta" in out and "│ Listo" in out
+    assert "Error" in out and "│ Algo salió mal" in out and "• dato" in out
 
 
 class FakeVoiceGui:

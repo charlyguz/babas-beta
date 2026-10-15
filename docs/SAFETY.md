@@ -141,6 +141,10 @@ URL when `PageState.has_captcha` is true, and whenever a `PASSWORD_FIELD` error 
   directory because the user asked for the file and sees it in the step log) or the CLI's error debug captures (temp debug
   dir, deleted at exit). Nothing else persists page content.
 - Never write the pairing token, API keys or page text to logs.
+- Voice input: the microphone is only opened after the user clicks "Hablar", the panel shows that it is listening, and
+  the tracks are stopped when recording ends (30 s at most). The audio goes only to the loopback bridge and to the speech
+  backend the user configured; it is never stored, and neither audio nor transcripts are logged. A transcript only fills
+  the text box for the user to read and edit; sending it is a separate click, so the usual gate still applies to the task.
 
 ## 7. Test matrix (each rule has a test; P1/P2/P3 files)
 | rule | test |
@@ -154,3 +158,4 @@ URL when `PageState.has_captcha` is true, and whenever a `PASSWORD_FIELD` error 
 | handoffs | `tests/e2e/test_safety_e2e.py::test_captcha_handoff`, `::test_password_handoff` |
 | Stop | `tests/e2e/test_panel_e2e.py::test_stop_within_one_second` |
 | redaction | `tests/test_safety.py::test_redact` + `tests/test_agent.py::test_logs_never_contain_pii` |
+| voice data (§6) | `tests/test_session.py` (stt handler, caplog), `tests/test_stt.py`, `extension/src/background/voice-relay.test.ts`, `extension/src/sidepanel/voice.test.ts`, `view.test.ts` (voice), `tests/e2e/test_voice_e2e.py` |

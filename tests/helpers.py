@@ -351,3 +351,48 @@ class FakeBridge:
             if inspect.isawaitable(response):
                 response = await response
         return response
+
+
+class EventBridge(FakeBridge):
+    """FakeBridge that also records bridge.on handlers; fire() calls them like BridgeServer does for incoming events."""
+
+    def __init__(self, responses: Optional[Dict[str, Any]] = None):
+        super().__init__(responses)
+        self.handlers: Dict[str, List[Any]] = {}
+
+    def on(self, event_type: str, handler: Any) -> None:
+        self.handlers.setdefault(event_type, []).append(handler)
+
+    async def fire(self, event_type: str, payload: Any = None) -> None:
+        for handler in self.handlers.get(event_type, []):
+            await handler({} if payload is None else payload)
+
+
+class FakeSTT:
+    """result is a string, an exception (instance or class), or a callable(audio, mime, language); gate delays the answer until set."""
+
+    def __init__(self, result: Any = "hola", *, gate: Optional[asyncio.Event] = None):
+        self.result = result
+        self.gate = gate
+        self.calls: List[Tuple[int, str, str]] = []
+        self.started = asyncio.Event()
+        self.closed = 0
+
+    async def transcribe(self, audio: bytes, mime: str, language: str) -> str:
+        self.calls.append((len(audio), mime, language))
+        self.started.set()
+        if self.gate is not None:
+            await self.gate.wait()
+        result = self.result
+        if isinstance(result, type) and issubclass(result, BaseException):
+            raise result()
+        if isinstance(result, BaseException):
+            raise result
+        if callable(result):
+            result = result(audio, mime, language)
+            if inspect.isawaitable(result):
+                result = await result
+        return result
+
+    async def close(self) -> None:
+        self.closed += 1

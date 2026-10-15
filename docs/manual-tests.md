@@ -67,6 +67,22 @@ and what BABAS reported in the table below (CLAUDE.md points here).
 | | | | |
 | | | | |
 
+## Voice (microphone)
+Needs a speech backend (`docs/providers.md` section 4). Test in Chrome and in Brave, with a real microphone.
+- [ ] **First use:** press "Hablar". Either the browser asks for the microphone, or the panel explains the problem and
+      shows "Dar permiso"; that opens a tab, "Permitir el micrófono" grants it, and after going back "Hablar" works.
+- [ ] **Dictation:** say "Busque videos de recetas en YouTube", wait for the pause (or press "Listo"). The sentence appears
+      in the text box, nothing is sent, and you can edit it. Press "Enviar" to run it.
+- [ ] **Silence:** press "Hablar" and say nothing. It tells you it heard nothing and the button works again.
+- [ ] **30 s cap and Stop:** talk for more than 30 s (it ends by itself). Pressing "Detener" during a run still works.
+- [ ] **Closing the panel mid-recording** turns the microphone indicator of the browser off.
+- [ ] **Wrong key or no backend:** the message says what to do, in plain Spanish, without technical words.
+Record here the browser, the backend and anything odd (for example, a side panel that never shows the prompt):
+
+| Browser | Backend | Result / notes |
+|---|---|---|
+| | | |
+
 ## Stop checklist
 Press "Detener" in each state. After each one the panel reads "Detenido. No se hizo nada más." within 1 s, and for the
 next 10 s nothing is clicked, typed or navigated in any tab. Then press "Reanudar" and run Y1 to confirm it still works.

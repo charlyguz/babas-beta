@@ -1,4 +1,4 @@
-import type { LogKind, PanelToSw, RunStateName, SwToPanel } from '../shared/messages';
+import { VOICE_ERROR_KEYS, type LogKind, type PanelToSw, type RunStateName, type SwToPanel } from '../shared/messages';
 import { BabasError, isTarget, type PageCommand, type Target } from '../shared/protocol';
 import { Bridge, getBridgePort } from './bridge';
 import {
@@ -38,9 +38,16 @@ import {
 } from './state';
 import { clearHighlights, getTab, navigate, pageCommand, settle, withTimeout, type PrepareCommand } from './tabs';
 import * as ui from './ui';
+import { VoiceRelay } from './voice-relay';
 
 const bridge = new Bridge();
 const t: Translate = (key, substitutions) => chrome.i18n.getMessage(key, substitutions) || key;
+const voice = new VoiceRelay<chrome.runtime.Port>({
+  isBridgeUp: () => bridge.connected,
+  emit: (type, payload) => bridge.emit(type, payload),
+  send: (port, message) => ui.sendTo(port, message),
+  text: (code) => t(VOICE_ERROR_KEYS[code]),
+});
 const GATED_OPS = new Set(['click', 'type', 'press', 'select']);
 const LOG_KINDS: readonly string[] = ['user', 'assistant', 'step', 'result', 'error', 'info'];
 const RUN_STATES: readonly string[] = ['running', 'done', 'failed', 'stopped'];
@@ -312,6 +319,8 @@ bridge.on('ui.allow_site', async (payload) => {
   return { approved: true };
 });
 
+bridge.on('ui.transcript', async (payload) => voice.handleTranscript(payload));
+
 bridge.on('ui.log', async (payload) => {
   const kind = String(payload.kind);
   if (!LOG_KINDS.includes(kind)) throw new BabasError('BAD_REQUEST', `Unknown log kind: ${kind}`);
@@ -388,6 +397,9 @@ async function onPanelMessage(message: PanelToSw, port: chrome.runtime.Port): Pr
     case 'settings.get':
       ui.sendTo(port, await settingsMessage());
       return;
+    case 'voice.audio':
+      voice.request(port, message);
+      return;
     case 'settings.set':
       if (message.bridgePort !== undefined) await setBridgePort(message.bridgePort);
       if (message.removeSite !== undefined) await removeAllowedSite(message.removeSite);
@@ -403,6 +415,7 @@ ui.initPanels({
       if (message.type === 'task.start') ui.log('error', t('runFailed'));
     });
   },
+  onDisconnect: (port) => voice.portClosed(port),
   greeting: async () => [await statusMessage(), await settingsMessage()],
 });
 
@@ -414,7 +427,10 @@ bridge.onWelcome((payload) => {
   if (typeof payload.token === 'string' && payload.token.length > 0 && payload.token.length <= 256) void setPairToken(payload.token);
 });
 bridge.onStatus((connected) => {
-  if (!connected) ui.closeAll('stopped');
+  if (!connected) {
+    ui.closeAll('stopped');
+    voice.bridgeDown();
+  }
   void broadcastStatus();
 });
 

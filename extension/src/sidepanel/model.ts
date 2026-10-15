@@ -1,4 +1,4 @@
-import type { AskKind, LogKind, RunStateName, SwToPanel } from '../shared/messages';
+import { VOICE_ERROR_KEYS, type AskKind, type LogKind, type RunStateName, type SwToPanel, type VoiceErrorCode } from '../shared/messages';
 
 export const MAX_LOG_ENTRIES = 500;
 
@@ -15,6 +15,17 @@ export type RequestItem =
   | { kind: 'ask'; id: string; question: string; askKind: AskKind }
   | { kind: 'allow'; id: string; host: string; url: string };
 
+export type VoicePhase = 'idle' | 'starting' | 'recording' | 'transcribing';
+export type VoiceFailure = VoiceErrorCode | 'permission' | 'no_device' | 'mic_busy' | 'capture';
+
+const VOICE_FAILURE_KEYS: Record<VoiceFailure, string> = {
+  ...VOICE_ERROR_KEYS,
+  permission: 'voiceErrPermission',
+  no_device: 'voiceErrNoDevice',
+  mic_busy: 'voiceErrMicBusy',
+  capture: 'voiceErrCapture',
+};
+
 export interface PanelState {
   portUp: boolean;
   bridgeUp: boolean;
@@ -27,6 +38,9 @@ export interface PanelState {
   queue: RequestItem[];
   bridgePort: number | null;
   sites: string[];
+  voice: VoicePhase;
+  voiceError: VoiceFailure | null;
+  voiceRequestId: string | null;
 }
 
 export type PanelAction =
@@ -34,7 +48,11 @@ export type PanelAction =
   | { type: 'sw'; message: SwToPanel }
   | { type: 'user.sent'; text: string; ts: number }
   | { type: 'user.stopped' }
-  | { type: 'request.answered'; request_id: string };
+  | { type: 'request.answered'; request_id: string }
+  | { type: 'voice.starting' }
+  | { type: 'voice.recording' }
+  | { type: 'voice.transcribing'; request_id: string }
+  | { type: 'voice.failed'; code: VoiceFailure };
 
 export function initialState(): PanelState {
   return {
@@ -49,7 +67,18 @@ export function initialState(): PanelState {
     queue: [],
     bridgePort: null,
     sites: [],
+    voice: 'idle',
+    voiceError: null,
+    voiceRequestId: null,
   };
+}
+
+function voiceFailed(state: PanelState, code: VoiceFailure): PanelState {
+  return { ...state, voice: 'idle', voiceError: code, voiceRequestId: null };
+}
+
+function isCurrentTranscription(state: PanelState, requestId: string): boolean {
+  return state.voice === 'transcribing' && state.voiceRequestId === requestId;
 }
 
 function appendLog(state: PanelState, entry: Omit<LogItem, 'id'>): PanelState {
@@ -92,8 +121,11 @@ function applyStatus(state: PanelState, message: Extract<SwToPanel, { type: 'sta
 
 function applySw(state: PanelState, message: SwToPanel): PanelState {
   switch (message.type) {
-    case 'status':
-      return applyStatus(state, message);
+    case 'status': {
+      const next = applyStatus(state, message);
+      // The microphone cannot be released from a button that is disabled, so a lost link ends the recording here.
+      return !message.connected && (next.voice === 'starting' || next.voice === 'recording') ? voiceFailed(next, 'no_connection') : next;
+    }
     case 'log':
       return appendLog(state, {
         kind: message.entry.kind,
@@ -113,6 +145,11 @@ function applySw(state: PanelState, message: SwToPanel): PanelState {
       return { ...state, runState: message.state, summary: message.summary ?? null, running: message.state === 'running' };
     case 'settings':
       return { ...state, bridgePort: message.bridgePort, sites: message.sites };
+    case 'voice.result':
+      if (!isCurrentTranscription(state, message.request_id)) return state;
+      return message.text.trim() === '' ? voiceFailed(state, 'empty') : { ...state, voice: 'idle', voiceError: null, voiceRequestId: null };
+    case 'voice.error':
+      return isCurrentTranscription(state, message.request_id) ? voiceFailed(state, message.code) : state;
     default:
       return state;
   }
@@ -122,15 +159,24 @@ export function reduce(state: PanelState, action: PanelAction): PanelState {
   switch (action.type) {
     case 'port':
       // Pending cards are dropped with the port: the worker replays every request that is still open on reconnect.
-      return action.up ? { ...state, portUp: true } : { ...state, portUp: false, queue: [] };
+      if (action.up) return { ...state, portUp: true };
+      return state.voice === 'idle' ? { ...state, portUp: false, queue: [] } : voiceFailed({ ...state, portUp: false, queue: [] }, 'no_connection');
     case 'sw':
       return applySw(state, action.message);
     case 'user.sent':
-      return { ...appendLog(state, { kind: 'user', text: action.text, ts: action.ts }), runState: null, summary: null };
+      return { ...appendLog(state, { kind: 'user', text: action.text, ts: action.ts }), runState: null, summary: null, voice: 'idle', voiceError: null, voiceRequestId: null };
     case 'user.stopped':
       return { ...state, halted: true, running: false, runState: 'stopped', summary: null, queue: [] };
     case 'request.answered':
       return dequeue(state, action.request_id);
+    case 'voice.starting':
+      return { ...state, voice: 'starting', voiceError: null, voiceRequestId: null };
+    case 'voice.recording':
+      return state.voice === 'starting' ? { ...state, voice: 'recording' } : state;
+    case 'voice.transcribing':
+      return state.voice === 'recording' ? { ...state, voice: 'transcribing', voiceRequestId: action.request_id } : state;
+    case 'voice.failed':
+      return voiceFailed(state, action.code);
     default:
       return state;
   }
@@ -179,4 +225,33 @@ export function showResume(state: PanelState): boolean {
 
 export function activeRequest(state: PanelState): RequestItem | undefined {
   return state.queue[0];
+}
+
+export function micDisabled(state: PanelState): boolean {
+  return isDisconnected(state) || state.voice === 'starting' || state.voice === 'transcribing';
+}
+
+export function micLabelKey(state: PanelState): 'voiceStart' | 'voiceFinish' {
+  return state.voice === 'recording' ? 'voiceFinish' : 'voiceStart';
+}
+
+export function voiceStatusKey(state: PanelState): string | null {
+  switch (state.voice) {
+    case 'starting':
+      return 'voiceStarting';
+    case 'recording':
+      return 'voiceListening';
+    case 'transcribing':
+      return 'voiceTranscribing';
+    default:
+      return null;
+  }
+}
+
+export function voiceErrorKey(code: VoiceFailure): string {
+  return VOICE_FAILURE_KEYS[code];
+}
+
+export function showPermissionButton(state: PanelState): boolean {
+  return state.voice === 'idle' && state.voiceError === 'permission';
 }

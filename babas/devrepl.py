@@ -10,40 +10,53 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, List, Optional
 
+from babas import __version__, ui
 from babas.bridge.server import BridgeServer
 from babas.config import Settings
 from babas.drivers.base import BrowserDriver, DriverError, Element, Target
 from babas.drivers.extension_driver import ExtensionDriver
 from babas.logs import setup_logging
 from babas.safety import SafetyPolicy, redact
+from babas.stt import make_stt
 
 log = logging.getLogger("babas.devrepl")
 
-PROMPT = "babas> "
+PROMPT_LABEL = "babas"
 WATCH_INTERVAL = 0.2
 DEFAULT_SCROLL = 500
 MCP_START_GRACE_S = 0.2
 MCP_EXTRA_HINT = "Install the MCP extra: pip install 'babas[mcp]'"
 
-HELP_LINES = [
-    "COMMANDS:",
-    "   ls                    -> list the elements of the page (highlights them)",
-    "   click N               -> click element N of the last ls",
-    "   type N text...        -> type text into element N",
-    "   select N value...     -> choose an option of select N",
-    "   press KEY [N]         -> press a key (Enter, Tab, Escape, ...), optionally on element N",
-    "   scroll up|down [px]   -> scroll the page (default 500)",
-    "   read [N]              -> read the page text, or the text of element N",
-    "   goto URL              -> open an http(s) URL in the current tab",
-    "   hl all|off            -> show or hide the highlights",
-    "   tabs                  -> list the tabs BABAS knows",
-    "   new [URL]             -> open a new tab",
-    "   switch NAME           -> make a tab current",
-    "   close [NAME]          -> close a tab (default: the current one)",
-    "   shot [file.png]       -> save a screenshot of the visible area",
-    "   help, ?               -> this list",
-    "   quit, exit, q         -> stop",
+HELP_COMMANDS = [
+    ("ls", "list the elements of the page (highlights them)"),
+    ("click N", "click element N of the last ls"),
+    ("type N text...", "type text into element N"),
+    ("select N value...", "choose an option of select N"),
+    ("press KEY [N]", "press a key (Enter, Tab, Escape, ...), optionally on element N"),
+    ("scroll up|down [px]", "scroll the page (default 500)"),
+    ("read [N]", "read the page text, or the text of element N"),
+    ("goto URL", "open an http(s) URL in the current tab"),
+    ("hl all|off", "show or hide the highlights"),
+    ("tabs", "list the tabs BABAS knows"),
+    ("new [URL]", "open a new tab"),
+    ("switch NAME", "make a tab current"),
+    ("close [NAME]", "close a tab (default: the current one)"),
+    ("shot [file.png]", "save a screenshot of the visible area"),
+    ("help, ?", "this list"),
+    ("quit, exit, q", "stop"),
 ]
+
+
+def _term() -> ui.Term:
+    return ui.detect(sys.stdout)
+
+
+def _say(status: str, text: str) -> None:
+    ui.emit(ui.step(_term(), status, text, wrap_text=False))
+
+
+def render_help(term: ui.Term) -> str:
+    return ui.table(term, ["Command", "What it does"], HELP_COMMANDS, styles=[("bold", "bright_cyan"), ()])
 
 
 async def _ainput(prompt: str) -> str:
@@ -60,7 +73,7 @@ async def _ainput(prompt: str) -> str:
 
     def worker() -> None:
         try:
-            line = input(prompt)
+            line = input(ui.for_input(prompt))
         except Exception as exc:
             outcome = (None, exc)
         else:
@@ -82,12 +95,14 @@ def _escape_newlines(text: str) -> str:
     return text.replace("\r", "").replace("\n", "\\n")
 
 
-def _format_element(el: Element) -> str:
-    line = f'[{el.index}] {el.role} "{redact(_one_line(el.label))}"'
+def _format_element(el: Element, term: Optional[ui.Term] = None) -> str:
+    term = term if term is not None else ui.Term()
+    line = f"{term.paint(f'[{el.index}]', 'bright_cyan')} {term.paint(_one_line(ui.clean(el.role)), 'dim')}"
+    line += f' "{redact(_one_line(ui.clean(el.label)))}"'
     if el.flags:
-        line += " {" + ",".join(el.flags) + "}"
+        line += " " + term.paint("{" + ",".join(ui.clean(flag) for flag in el.flags) + "}", "yellow")
     if el.value:
-        line += f" = {redact(_escape_newlines(el.value))}"
+        line += f" = {term.paint(redact(_escape_newlines(ui.clean(el.value))), 'green')}"
     return line
 
 
@@ -120,30 +135,29 @@ class _Session:
         if cmd in ("quit", "exit", "q"):
             return False
         if cmd in ("help", "?"):
-            for text in HELP_LINES:
-                print(text)
+            ui.emit(render_help(_term()))
             return True
         try:
             await _ensure_started(self.driver)
             await self._dispatch(cmd, line.lstrip())
         except DriverError as exc:
-            print(f"   ERROR {exc.code}: {redact(exc.message)}")
+            _say("failure", f"ERROR {exc.code}: {redact(ui.clean(exc.message))}")
             if exc.data:
-                print(f"   data: {redact(json.dumps(exc.data, ensure_ascii=False, default=str))}")
+                _say("info", f"data: {redact(ui.clean(json.dumps(exc.data, ensure_ascii=False, default=str)))}")
         except Exception as exc:
             log.exception("repl command failed: %s", cmd)
-            print(f"   ERROR INTERNAL: {type(exc).__name__}: {redact(str(exc))}")
+            _say("failure", f"ERROR INTERNAL: {type(exc).__name__}: {redact(ui.clean(str(exc)))}")
         return True
 
     def _need_snapshot(self) -> bool:
         if self.snapshot_id is None:
-            print("   ERROR: run ls first")
+            _say("failure", "ERROR: run ls first")
             return False
         return True
 
     @staticmethod
     def _usage(text: str) -> None:
-        print(f"   ERROR: usage: {text}")
+        _say("failure", f"ERROR: usage: {text}")
 
     async def _dispatch(self, cmd: str, line: str) -> None:
         driver = self.driver
@@ -153,17 +167,18 @@ class _Session:
         if cmd == "ls":
             state = await driver.get_page_state(highlight=True)
             self.snapshot_id = state.snapshot_id
-            print(f"URL: {redact(state.url)}")
-            print(f"TITLE: {redact(state.title)}")
+            term = _term()
+            ui.emit(f"{term.paint('URL:', 'dim')} {redact(_one_line(ui.clean(state.url)))}")
+            ui.emit(f"{term.paint('TITLE:', 'dim')} {redact(_one_line(ui.clean(state.title)))}")
             for el in state.elements:
-                print(_format_element(el))
+                ui.emit(_format_element(el, term))
         elif cmd == "click":
             index = _parse_index(args[0]) if len(args) == 1 else None
             if index is None:
                 return self._usage("click N")
             if self._need_snapshot():
                 await driver.click(self.target(index))
-                print("   OK")
+                _say("success", "OK")
         elif cmd in ("type", "select"):
             pieces = line.split(None, 2)
             index = _parse_index(pieces[1]) if len(pieces) == 3 else None
@@ -172,9 +187,9 @@ class _Session:
             if self._need_snapshot():
                 if cmd == "type":
                     await driver.type_text(self.target(index), pieces[2])
-                    print("   OK")
+                    _say("success", "OK")
                 else:
-                    print(f"   Selected: {redact(str(await driver.select_option(self.target(index), pieces[2])))}")
+                    _say("success", f"Selected: {redact(ui.clean(str(await driver.select_option(self.target(index), pieces[2]))))}")
         elif cmd == "press":
             if len(args) not in (1, 2):
                 return self._usage("press KEY [N]")
@@ -184,72 +199,74 @@ class _Session:
             if index is not None and not self._need_snapshot():
                 return
             await driver.press_key(args[0], self.target(index) if index is not None else None)
-            print("   OK")
+            _say("success", "OK")
         elif cmd == "scroll":
             amount = _parse_index(args[1]) if len(args) == 2 else DEFAULT_SCROLL
             if len(args) not in (1, 2) or args[0].lower() not in ("up", "down") or amount is None:
                 return self._usage("scroll up|down [px]")
             await driver.scroll(args[0].lower(), amount)  # type: ignore[arg-type]
-            print("   OK")
+            _say("success", "OK")
         elif cmd == "read":
             index = _parse_index(args[0]) if len(args) == 1 else None
             if len(args) > 1 or (len(args) == 1 and index is None):
                 return self._usage("read [N]")
             if index is not None and not self._need_snapshot():
                 return
-            print(redact(await driver.read_text(self.target(index) if index is not None else None)))
+            ui.emit(redact(ui.clean(await driver.read_text(self.target(index) if index is not None else None))))
         elif cmd == "goto":
             if len(args) != 1:
                 return self._usage("goto URL")
             await driver.goto(args[0])
-            print(f"   URL: {redact(await driver.current_url())}")
+            _say("success", f"URL: {redact(ui.clean(await driver.current_url()))}")
         elif cmd == "hl":
             if len(args) != 1 or args[0].lower() not in ("all", "off"):
                 return self._usage("hl all|off")
             await driver.highlight(args[0].lower())  # type: ignore[arg-type]
-            print("   OK")
+            _say("success", "OK")
         elif cmd == "tabs":
-            print("Tabs:")
-            for name in driver.list_tabs():
-                marker = "->" if name == driver.current_tab else "  "
-                print(f"   {marker} [{name}]")
+            term = _term()
+            rows = [[term.glyph("pointer") if name == driver.current_tab else "", name] for name in driver.list_tabs()]
+            ui.emit(ui.table(term, ["", "Tab"], rows, styles=[("bright_cyan",), ("bold",)]))
         elif cmd == "new":
             if len(args) > 1:
                 return self._usage("new [URL]")
             name = await driver.new_tab(url=args[0] if args else None)
-            print(f"   New tab: '{name}'")
+            _say("success", f"New tab: '{name}'")
         elif cmd == "switch":
             if len(args) != 1:
                 return self._usage("switch NAME")
             await driver.switch_tab(args[0])
-            print(f"   Current tab: '{args[0]}'")
+            _say("success", f"Current tab: '{args[0]}'")
         elif cmd == "close":
             if len(args) > 1:
                 return self._usage("close [NAME]")
             name = args[0] if args else driver.current_tab
             if await driver.close_tab(args[0] if args else None):
-                print(f"   Tab closed: '{name}'")
+                _say("success", f"Tab closed: '{name}'")
             else:
-                print(f"   ERROR: cannot close '{name}' (unknown tab, or the main tab)")
+                _say("failure", f"ERROR: cannot close '{name}' (unknown tab, or the main tab)")
         elif cmd in ("shot", "screenshot", "ss"):
             if len(args) > 1:
                 return self._usage("shot [file.png]")
             filename = args[0] if args else f"screenshot_{datetime.now().strftime('%H%M%S')}.png"
             png = await driver.screenshot()
             await asyncio.to_thread(Path(filename).write_bytes, png)
-            print(f"   Saved: {filename}")
+            _say("success", f"Saved: {filename}")
         else:
-            print(f"   Unknown command '{redact(cmd)}'. Type help to see the commands.")
+            _say("warn", f"Unknown command '{redact(ui.clean(cmd))}'. Type help to see the commands.")
 
 
 async def repl(driver: BrowserDriver, bridge: BridgeServer) -> None:
     session = _Session(driver)
-    print("BABAS developer console. Type help for the commands.")
+    term = _term()
+    ui.emit()
+    ui.emit(ui.rule(term, "Developer console"))
+    _say("info", "BABAS developer console. Type help for the commands.")
     while True:
         try:
-            line = await _ainput(PROMPT)
+            line = await _ainput(ui.prompt(term, PROMPT_LABEL))
         except EOFError:
-            print()
+            ui.emit()
             return
         if not await session.run(line):
             return
@@ -267,9 +284,9 @@ async def _watch_connection(bridge: BridgeServer) -> None:
             continue
         was_connected = now_connected
         if now_connected:
-            print(f"Extension connected (v{bridge.extension_version})")
+            _say("success", f"Extension connected (v{bridge.extension_version})")
         else:
-            print("Extension disconnected")
+            _say("warn", "Extension disconnected")
 
 
 def _pairing_problem(path: Path) -> Optional[str]:
@@ -299,7 +316,7 @@ def import_mcp_server() -> ModuleType:
     except ImportError as exc:
         if (exc.name or "mcp").split(".")[0] != "mcp":
             raise
-        print(MCP_EXTRA_HINT, file=sys.stderr)
+        ui.emit(ui.step(ui.detect(sys.stderr), "failure", MCP_EXTRA_HINT, wrap_text=False), stream=sys.stderr)
         raise SystemExit(1) from None
 
 
@@ -335,7 +352,7 @@ async def run_serve(settings: Settings, repl: bool = False, mcp_http: bool = Fal
     pairing_file = settings.pairing_file
     problem = _pairing_problem(pairing_file)
     if problem:
-        print(problem)
+        _say("failure", problem)
         raise SystemExit(1)
     bridge = BridgeServer(
         settings.bridge_host, settings.bridge_port, list(settings.extension_origins), pairing_file=pairing_file
@@ -343,10 +360,25 @@ async def run_serve(settings: Settings, repl: bool = False, mcp_http: bool = Fal
     try:
         await bridge.start()
     except OSError as exc:
-        print(f"Could not listen on {settings.bridge_host}:{settings.bridge_port}: {exc}")
+        _say("failure", f"Could not listen on {settings.bridge_host}:{settings.bridge_port}: {exc}")
         raise SystemExit(1) from None
-    print(f"BABAS bridge on ws://{settings.bridge_host}:{bridge.port} — waiting for the extension…")
-    print(f"Pairing file: {pairing_file}")
+    term = _term()
+    ui.emit()
+    ui.emit(
+        ui.banner(
+            term,
+            [
+                ("mode", "developer console" if repl else "side panel"),
+                ("model", settings.llm_model or "not set"),
+                ("lang", settings.language),
+                ("safety", "on"),
+            ],
+            version=__version__,
+        )
+    )
+    ui.emit()
+    _say("running", f"BABAS bridge on ws://{settings.bridge_host}:{bridge.port} {term.glyph('dash')} waiting for the extension{term.glyph('ellipsis')}")
+    ui.emit(f"    {term.paint('Pairing file:', 'dim')} {pairing_file}")
     watcher = asyncio.get_running_loop().create_task(_watch_connection(bridge))
     session: Any = None
     runtime: Any = None
@@ -360,7 +392,8 @@ async def run_serve(settings: Settings, repl: bool = False, mcp_http: bool = Fal
 
             note = _key_note(settings)
             if note:
-                print(note)
+                ui.emit()
+                ui.emit(ui.note(term, note))
             session = Session(
                 bridge,
                 lambda: make_llm(settings),
@@ -368,6 +401,7 @@ async def run_serve(settings: Settings, repl: bool = False, mcp_http: bool = Fal
                 language=settings.language,
                 max_steps=settings.max_steps,
                 max_retries=settings.max_retries,
+                stt_factory=lambda: make_stt(settings),
             )
             if mcp_module is None:
                 await asyncio.Event().wait()
@@ -380,7 +414,7 @@ async def run_serve(settings: Settings, repl: bool = False, mcp_http: bool = Fal
                 )
                 await asyncio.wait({mcp_task}, timeout=MCP_START_GRACE_S)
                 if not mcp_task.done():
-                    print(f"MCP over HTTP: http://127.0.0.1:{settings.mcp_http_port}/mcp")
+                    _say("success", f"MCP over HTTP: http://127.0.0.1:{settings.mcp_http_port}/mcp")
                 await _wait_for_mcp(mcp_task)
     finally:
         watcher.cancel()
@@ -399,10 +433,10 @@ async def _wait_for_mcp(task: "asyncio.Task[None]") -> None:
     try:
         await task
     except OSError as exc:
-        print(f"Could not start the MCP HTTP endpoint: {exc.strerror or type(exc).__name__}")
+        _say("failure", f"Could not start the MCP HTTP endpoint: {exc.strerror or type(exc).__name__}")
         raise SystemExit(1) from None
     except Exception as exc:
         log.error("the MCP HTTP endpoint failed: %s", type(exc).__name__)
-        print(f"The MCP HTTP endpoint failed ({type(exc).__name__}).")
+        _say("failure", f"The MCP HTTP endpoint failed ({type(exc).__name__}).")
         raise SystemExit(1) from None
-    print("The MCP HTTP endpoint stopped.")
+    _say("warn", "The MCP HTTP endpoint stopped.")

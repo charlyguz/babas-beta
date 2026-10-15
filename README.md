@@ -39,7 +39,8 @@ BABAS le pregunta antes de hacer algo importante. Estas reglas no se pueden salt
 
 Para entender una página, BABAS envía su texto al proveedor de IA que usted configure (OpenAI y otros servicios en la
 nube lo reciben). Si no quiere que salga de su computadora, use un modelo local (Ollama o LM Studio, ver
-[`docs/providers.md`](docs/providers.md)). Los datos personales se enmascaran en los registros y en el historial; solo
+[`docs/providers.md`](docs/providers.md)). Si usa la voz, la grabación (máximo 30 segundos y solo después de pulsar «Hablar») se envía al servicio de voz que usted
+configure, o se queda en su computadora con el modo local; BABAS no la guarda ni la registra. Los datos personales se enmascaran en los registros y en el historial; solo
 se muestran completos en la tarjeta donde usted los aprueba. Las claves se guardan únicamente en su archivo `.env`.
 
 ## Requisitos
@@ -104,7 +105,9 @@ BABAS_LLM_MODEL=el-modelo-que-elija
 ```
 
 Otras variables útiles: `BABAS_LANG` (`es` o `en`, por defecto `es`), `BABAS_ALLOWED_DOMAINS` (sitios que se suman a
-los permitidos; `*` permite todos), `BABAS_MAX_STEPS`, `BABAS_MAX_RETRIES`, `BABAS_BRIDGE_PORT` y `BABAS_LOG_LEVEL`. La
+los permitidos; `*` permite todos), `BABAS_MAX_STEPS`, `BABAS_MAX_RETRIES`, `BABAS_BRIDGE_PORT` y `BABAS_LOG_LEVEL`. Para
+la voz: `BABAS_STT_PROVIDER` (`auto`, `chat`, `whisper`, `local` u `off`), `BABAS_STT_MODEL`, `BABAS_STT_BASE_URL`,
+`BABAS_STT_API_KEY` y `BABAS_STT_LANGUAGE`. La
 lista completa, los proveedores probados y el modo JSON están en [`docs/providers.md`](docs/providers.md).
 
 ## Uso
@@ -113,8 +116,15 @@ lista completa, los proveedores probados y el modo JSON están en [`docs/provide
 Enter, por ejemplo «busque videos de recetas en YouTube». BABAS muestra cada paso, le pide permiso cuando hace falta y
 tiene un botón **Detener**.
 
+**Voz.** En el panel, pulse **Hablar**, diga lo que necesita y pulse **Listo** (también se detiene solo cuando usted hace
+pausa). Lo que dijo aparece escrito en la caja para que lo lea y lo corrija; no se envía hasta que usted pulse **Enviar**.
+La primera vez el navegador pide permiso para el micrófono; si no lo pide, el panel muestra «Dar permiso». Hace falta
+configurar el reconocimiento de voz (con Gemini usa la misma clave; también hay Whisper o un modelo local sin internet):
+vea la sección 4 de [`docs/providers.md`](docs/providers.md).
+
 **Terminal.** `python -m babas` abre una consola con su propio navegador (Playwright). Comandos: `help`, `tabs`, `new`,
-`screenshot`, `mute` y `exit`. La voz es opcional: `pip install -e '.[voice]'` y `ELEVENLABS_API_KEY` en `.env`.
+`screenshot`, `mute` y `exit`. La voz en la consola es opcional: `pip install -e '.[voice]'` (micrófono, con el mismo reconocimiento de voz de arriba) y
+`ELEVENLABS_API_KEY` en `.env` solo si quiere que BABAS también le hable.
 
 | Comando | Qué hace |
 |---|---|

@@ -5,16 +5,24 @@ import {
   canSend,
   initialState,
   isDisconnected,
+  micDisabled,
+  micLabelKey,
   reduce,
   runStateKey,
+  showPermissionButton,
   showResume,
   showStop,
   statusKey,
+  voiceErrorKey,
+  voiceStatusKey,
   type LogItem,
   type PanelAction,
   type PanelState,
   type RequestItem,
+  type VoiceFailure,
+  type VoicePhase,
 } from './model';
+import { classifyCaptureError, type RecorderHooks, type VoiceRecorderLike } from './voice';
 
 export interface ViewDeps {
   t: Translate;
@@ -22,15 +30,22 @@ export interface ViewDeps {
   getWindowId?: () => number | undefined;
   now?: () => number;
   armDelayMs?: number;
+  voice?: { createRecorder: (hooks: RecorderHooks) => VoiceRecorderLike };
+  openMicPermission?: () => void;
+  newRequestId?: () => string;
+  transcribeTimeoutMs?: number;
 }
 
 export interface PanelView {
   dispatch(action: PanelAction): void;
   getState(): PanelState;
+  dispose(): void;
 }
 
 const DEFAULT_ARM_DELAY_MS = 500;
 const MAX_TASK_LENGTH = 4000;
+const DEFAULT_TRANSCRIBE_TIMEOUT_MS = 100_000;
+const SVG_NS = 'http://www.w3.org/2000/svg';
 
 interface ElOptions {
   cls?: string;
@@ -47,6 +62,25 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, options: ElOptions = 
   for (const [name, value] of Object.entries(options.attrs ?? {})) node.setAttribute(name, value);
   for (const child of children) node.append(child);
   return node;
+}
+
+function svgIcon(cls: string, shapes: Array<[string, Record<string, string>]>): SVGSVGElement {
+  const node = document.createElementNS(SVG_NS, 'svg');
+  node.setAttribute('class', `mic-icon ${cls}`);
+  node.setAttribute('viewBox', '0 0 24 24');
+  node.setAttribute('aria-hidden', 'true');
+  node.setAttribute('focusable', 'false');
+  for (const [tag, attrs] of shapes) {
+    const shape = document.createElementNS(SVG_NS, tag);
+    for (const [name, value] of Object.entries(attrs)) shape.setAttribute(name, value);
+    node.append(shape);
+  }
+  return node;
+}
+
+function failureFor(err: unknown): VoiceFailure {
+  const { code } = classifyCaptureError(err);
+  return code === 'permission' || code === 'no_device' || code === 'mic_busy' || code === 'empty' ? code : 'capture';
 }
 
 function validPort(raw: string): number | null {
@@ -85,8 +119,25 @@ export function mountPanel(root: HTMLElement, deps: ViewDeps): PanelView {
     attrs: { rows: '3', maxlength: String(MAX_TASK_LENGTH), placeholder: t('inputPlaceholder'), 'aria-label': t('inputPlaceholder'), enterkeyhint: 'send' },
   });
   const send = el('button', { cls: 'btn btn-primary send', testid: 'send', text: t('send'), attrs: { type: 'button' } });
-  const compose = el('div', { cls: 'compose' }, input, send);
-  const footer = el('footer', { cls: 'footer' }, runState, stop, resume, compose);
+  const micLabel = el('span', { cls: 'mic-label', testid: 'mic-label', text: t('voiceStart') });
+  const mic = el(
+    'button',
+    { cls: 'btn mic', testid: 'mic', attrs: { type: 'button' } },
+    svgIcon('mic-icon-idle', [
+      ['rect', { x: '9', y: '2.5', width: '6', height: '12', rx: '3' }],
+      ['path', { d: 'M5 11.5a7 7 0 0 0 14 0' }],
+      ['path', { d: 'M12 18.5v3M8.5 21.5h7' }],
+    ]),
+    svgIcon('mic-icon-done', [['path', { d: 'M5 12.5l4.5 4.5L19 7' }]]),
+    micLabel,
+  );
+  const voiceStatus = el('div', { cls: 'voice-status', testid: 'voice-status', attrs: { role: 'status', 'aria-live': 'polite' } });
+  const levelBar = el('span', { cls: 'voice-level-bar' });
+  const level = el('div', { cls: 'voice-level', testid: 'voice-level', attrs: { 'aria-hidden': 'true' } }, levelBar);
+  const grant = el('button', { cls: 'btn btn-primary btn-block voice-permission', testid: 'voice-permission', text: t('voiceGrantPermission'), attrs: { type: 'button' } });
+  const voiceBox = el('div', { cls: 'voice', testid: 'voice' }, voiceStatus, level, grant);
+  const compose = el('div', { cls: 'compose' }, input, el('div', { cls: 'compose-actions' }, mic, send));
+  const footer = el('footer', { cls: 'footer' }, runState, stop, resume, voiceBox, compose);
 
   const portInput = el('input', {
     cls: 'port-input',
@@ -103,10 +154,113 @@ export function mountPanel(root: HTMLElement, deps: ViewDeps): PanelView {
 
   root.append(header, help, log, requests, footer, settings);
 
+  const voice = deps.voice;
+  const transcribeTimeoutMs = deps.transcribeTimeoutMs ?? DEFAULT_TRANSCRIBE_TIMEOUT_MS;
+  let recorder: VoiceRecorderLike | null = null;
+  let attempt = 0;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  let refocusMic = false;
+  let renderedVoice = '';
+
+  function insertTranscript(raw: string): void {
+    const spoken = raw.replace(/\s+/g, ' ').trim();
+    if (!spoken) return;
+    const current = input.value;
+    const separator = current === '' || /\s$/.test(current) ? '' : ' ';
+    input.value = (current + separator + spoken).slice(0, MAX_TASK_LENGTH);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    input.scrollTop = input.scrollHeight;
+  }
+
   const dispatch = (action: PanelAction): void => {
+    const before = state;
     state = reduce(state, action);
+    if (action.type === 'sw' && action.message.type === 'voice.result' && before.voice === 'transcribing' && state.voice === 'idle' && state.voiceError === null) {
+      insertTranscript(action.message.text);
+    }
     render();
   };
+
+  const currentPhase = (): VoicePhase => state.voice;
+
+  function clearWatchdog(): void {
+    clearTimeout(watchdog);
+    watchdog = undefined;
+  }
+
+  function releaseRecorder(): void {
+    attempt += 1;
+    const current = recorder;
+    recorder = null;
+    current?.cancel();
+  }
+
+  async function beginRecording(): Promise<void> {
+    if (!voice || state.voice !== 'idle' || isDisconnected(state)) return;
+    refocusMic = document.activeElement === mic;
+    const mine = (attempt += 1);
+    const created = voice.createRecorder({
+      onLevel: (value) => levelBar.style.setProperty('--level', value.toFixed(2)),
+      onAutoStop: () => {
+        if (mine === attempt && state.voice === 'recording') finishRecording();
+      },
+    });
+    recorder = created;
+    levelBar.style.setProperty('--level', '0');
+    dispatch({ type: 'voice.starting' });
+    try {
+      await created.start();
+    } catch (err) {
+      if (mine !== attempt) return;
+      recorder = null;
+      dispatch({ type: 'voice.failed', code: failureFor(err) });
+      return;
+    }
+    if (mine !== attempt || currentPhase() !== 'starting') {
+      created.cancel();
+      return;
+    }
+    dispatch({ type: 'voice.recording' });
+  }
+
+  function finishRecording(): void {
+    const current = recorder;
+    if (!current || state.voice !== 'recording') return;
+    attempt += 1;
+    recorder = null;
+    let audio: ReturnType<VoiceRecorderLike['finish']>;
+    try {
+      audio = current.finish();
+    } catch (err) {
+      current.cancel();
+      dispatch({ type: 'voice.failed', code: failureFor(err) });
+      return;
+    }
+    const requestId = (deps.newRequestId ?? (() => crypto.randomUUID()))();
+    if (!deps.send({ type: 'voice.audio', request_id: requestId, audio_base64: audio.audioBase64, duration_ms: audio.durationMs })) {
+      dispatch({ type: 'voice.failed', code: 'no_connection' });
+      return;
+    }
+    dispatch({ type: 'voice.transcribing', request_id: requestId });
+    watchdog = setTimeout(() => {
+      if (state.voice === 'transcribing' && state.voiceRequestId === requestId) dispatch({ type: 'voice.failed', code: 'timeout' });
+    }, transcribeTimeoutMs);
+  }
+
+  mic.addEventListener('click', () => {
+    if (state.voice === 'idle') void beginRecording();
+    else if (state.voice === 'recording') finishRecording();
+  });
+  grant.addEventListener('click', () => {
+    deps.openMicPermission?.();
+  });
+
+  const onPageHide = (): void => {
+    releaseRecorder();
+    clearWatchdog();
+  };
+  window.addEventListener('pagehide', onPageHide);
 
   const submit = (): void => {
     const text = input.value.trim();
@@ -316,6 +470,35 @@ export function mountPanel(root: HTMLElement, deps: ViewDeps): PanelView {
     }
   }
 
+  function renderVoice(): void {
+    const available = voice !== undefined;
+    mic.hidden = !available;
+    voiceBox.hidden = !available;
+    if (state.voice !== 'starting' && state.voice !== 'recording' && recorder) releaseRecorder();
+    if (state.voice !== 'transcribing') clearWatchdog();
+    mic.disabled = micDisabled(state);
+    mic.dataset.phase = state.voice;
+    mic.setAttribute('aria-busy', state.voice === 'starting' || state.voice === 'transcribing' ? 'true' : 'false');
+    micLabel.textContent = t(micLabelKey(state));
+    level.hidden = state.voice !== 'recording';
+    grant.hidden = !showPermissionButton(state);
+    const key = `${state.voice}|${state.voiceError ?? ''}`;
+    if (key !== renderedVoice) {
+      renderedVoice = key;
+      const statusKey = voiceStatusKey(state);
+      const parts: Node[] = [];
+      if (statusKey) {
+        parts.push(el('strong', { cls: 'voice-text', testid: 'voice-text', text: t(statusKey) }));
+        if (state.voice === 'recording') parts.push(el('span', { cls: 'voice-hint', testid: 'voice-hint', text: t('voiceListeningHint') }));
+      } else if (state.voiceError) {
+        parts.push(el('span', { cls: 'voice-error', testid: 'voice-error', text: t(voiceErrorKey(state.voiceError)) }));
+      }
+      voiceStatus.replaceChildren(...parts);
+      if (refocusMic && state.voice === 'idle' && state.voiceError !== null && (document.activeElement === document.body || document.activeElement === null)) mic.focus();
+      if (state.voice === 'idle') refocusMic = false;
+    }
+  }
+
   let renderedSites = '';
   function render(): void {
     root.classList.toggle('has-request', state.queue.length > 0);
@@ -324,6 +507,7 @@ export function mountPanel(root: HTMLElement, deps: ViewDeps): PanelView {
     renderRequests();
     renderRunState();
     send.disabled = !canSend(state);
+    renderVoice();
     stop.hidden = !showStop(state);
     resume.hidden = !showResume(state);
     const sitesKey = JSON.stringify([state.bridgePort, state.sites]);
@@ -334,5 +518,12 @@ export function mountPanel(root: HTMLElement, deps: ViewDeps): PanelView {
   }
 
   render();
-  return { dispatch, getState: () => state };
+  return {
+    dispatch,
+    getState: () => state,
+    dispose: () => {
+      window.removeEventListener('pagehide', onPageHide);
+      onPageHide();
+    },
+  };
 }

@@ -113,7 +113,8 @@ The panel calls `chrome.runtime.connect({name: "sidepanel"})`. The SW accepts th
 
 Panel → SW: `{type:"task.start", text, windowId}`, `{type:"stop"}`, `{type:"resume"}`,
 `{type:"confirm.answer", request_id, approved}`, `{type:"ask.answer", request_id, answer|null}`,
-`{type:"allow.answer", request_id, approved}`, `{type:"settings.get"}`, `{type:"settings.set", bridgePort?, removeSite?}`.
+`{type:"allow.answer", request_id, approved}`, `{type:"settings.get"}`, `{type:"settings.set", bridgePort?, removeSite?}`,
+`{type:"voice.audio", request_id, audio_base64, duration_ms}` (section 6).
 
 SW → panel: `{type:"status", connected, halted, running}`,
 `{type:"log", entry:{kind, text, ok?, ts}}`,
@@ -122,7 +123,8 @@ SW → panel: `{type:"status", connected, halted, running}`,
 `{type:"allow", request_id, host, url}`,
 `{type:"request.closed", request_id}` (answered elsewhere, timed out or stopped),
 `{type:"run_state", state, summary?}`,
-`{type:"settings", bridgePort, sites: string[]}`.
+`{type:"settings", bridgePort, sites: string[]}`,
+`{type:"voice.result", request_id, text}`, `{type:"voice.error", request_id, code, message}` (section 6).
 
 When a panel connects, the SW immediately sends `status`, `settings` and every still-pending confirm, ask or allow request.
 
@@ -172,3 +174,41 @@ pending ui request with `reason: "stopped"`, emits `run.stop`, and clears the pa
 - Pending UI requests are capped at 50 (more are denied), and all open cards are resolved as stopped when the bridge drops.
 - Pairing close: the server answers a wrong/missing token with 1008 "not paired" (the extension keeps retrying every
   <= 5 s); a corrupt/unwritable pairing file is rejected the same way and only the server log says why.
+
+## 6. Voice input (dictation into the side panel)
+The panel records the user's voice after a click, the Python side transcribes it with the configured speech-to-text
+backend (`babas/stt.py`), and the transcript only **fills the text box**: it never starts a task by itself.
+
+**Panel → SW** (port): `{type:"voice.audio", request_id, audio_base64, duration_ms}`. `request_id` is 1-128 characters,
+`audio_base64` is a 16 kHz mono PCM16 WAV (at most 30 s, so <= 1.5 M characters of base64), `duration_ms` is an integer
+1..30000. Anything else is rejected by the guard.
+
+**SW → panel** (port): `{type:"voice.result", request_id, text}` or `{type:"voice.error", request_id, code, message}`.
+`code` ∈ `no_connection` (bridge down), `timeout` (no answer in 90 s), `busy` (another transcription is running),
+`not_configured` (no usable speech backend), `provider` (the backend failed), `bad_audio`, `empty` (no speech found).
+`message` is plain es-MX text that is safe to show (never provider text, keys or audio).
+
+**SW → Python** (bridge event): `stt.transcribe {request_id, audio_base64, mime:"audio/wav", duration_ms}`.
+**Python → SW** (bridge request, answered with `{}`): `ui.transcript {request_id, text}` on success, or
+`ui.transcript {request_id, error:{code, message}}` with the same codes. Exactly one of `text` / `error` is present;
+`text` is at most 4000 characters. The SW forwards it to the panel as `voice.result` / `voice.error`.
+
+Rules: one transcription at a time per Python process (a second one gets `busy`); the audio and the transcript are
+never persisted by the SW or written to logs (only sizes and durations are logged); Python validates every field
+(`mime` must be `audio/wav`, decoded size <= 3 MiB) and answers every `stt.transcribe` it can parse, even on failure.
+The frame limit of the bridge (16 MiB) already covers the audio.
+
+As built (voice):
+- The panel records with a `ScriptProcessorNode` and sends a canonical 44-byte-header PCM16 mono 16 kHz WAV (at most 960,044
+  bytes / 30 s). It stops by itself after 2 s of quiet once speech was heard, and refuses recordings under 300 ms locally.
+- Failures that never reach Python are shown from `_locales` by local code (`permission`, `no_device`, `mic_busy`, `capture`);
+  the panel shows its own text for every code and ignores the `message` string. A 100 s watchdog in the panel ends a stuck
+  transcription with `timeout`.
+- The SW keeps at most 8 transcriptions in flight (`busy` beyond that), forgets them when their port closes, and answers
+  `no_connection` when the bridge drops.
+- Python releases `busy` as soon as the backend returns, before sending `ui.transcript`. HTTP backends give up after about 62 s;
+  the first use of the `local` backend may download the model and exceed the SW's 90 s, so pre-download it (`docs/providers.md`).
+- `micpermission.html` is an extension page opened in a tab with `chrome.tabs.create` when the side panel cannot get the
+  microphone (a side panel may not show the permission prompt); it asks once on a click, stops the tracks and tells the person to
+  go back to BABAS. It is not web-accessible.
+

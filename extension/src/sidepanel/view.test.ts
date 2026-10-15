@@ -3,6 +3,7 @@ import type { PanelToSw, SwToPanel } from '../shared/messages';
 import { MAX_LOG_ENTRIES } from './model';
 import { tEs } from './test-helpers';
 import { mountPanel, type PanelView } from './view';
+import { VoiceCaptureError, type RecordedAudio, type RecorderHooks, type VoiceRecorderLike } from './voice';
 
 interface Harness {
   view: PanelView;
@@ -514,5 +515,602 @@ describe('untrusted text is rendered inert', () => {
     q(h, 'ask-cancel').click();
     expect(q(h, 'allow-text').textContent).toBe(`BABAS quiere usar el sitio ${evil}.`);
     expect(h.root.querySelectorAll('img[src="x"], script, b').length).toBe(0);
+  });
+});
+
+class FakeRecorder implements VoiceRecorderLike {
+  active = false;
+  started = 0;
+  finished = 0;
+  cancelled = 0;
+  finishError: unknown = null;
+  private gate: { resolve: () => void; reject: (reason: unknown) => void } | null = null;
+
+  constructor(readonly hooks: RecorderHooks) {}
+
+  start(): Promise<void> {
+    this.started += 1;
+    this.active = true;
+    return new Promise<void>((resolve, reject) => {
+      this.gate = { resolve, reject };
+    });
+  }
+
+  grant(): void {
+    this.gate?.resolve();
+    this.gate = null;
+  }
+
+  deny(error: unknown): void {
+    this.active = false;
+    this.gate?.reject(error);
+    this.gate = null;
+  }
+
+  finish(): RecordedAudio {
+    this.finished += 1;
+    this.active = false;
+    if (this.finishError) throw this.finishError;
+    return { audioBase64: 'QUJD', durationMs: 1234 };
+  }
+
+  cancel(): void {
+    this.cancelled += 1;
+    this.active = false;
+    this.gate?.reject(new VoiceCaptureError('cancelled', 'cancelled'));
+    this.gate = null;
+  }
+}
+
+interface VoiceHarness extends Harness {
+  recorders: FakeRecorder[];
+  opened: { count: number };
+  rec(): FakeRecorder;
+}
+
+function setupVoice(options: { sendOk?: boolean; voice?: boolean; timeoutMs?: number } = {}): VoiceHarness {
+  document.body.innerHTML = '<div id="app"></div>';
+  const root = document.getElementById('app') as HTMLElement;
+  const sent: PanelToSw[] = [];
+  const recorders: FakeRecorder[] = [];
+  const opened = { count: 0 };
+  let ids = 0;
+  const view = mountPanel(root, {
+    t: tEs,
+    send: (message) => {
+      if (options.sendOk === false) return false;
+      sent.push(message);
+      return true;
+    },
+    now: () => 1000,
+    armDelayMs: 0,
+    voice:
+      options.voice === false
+        ? undefined
+        : {
+            createRecorder: (hooks) => {
+              const recorder = new FakeRecorder(hooks);
+              recorders.push(recorder);
+              return recorder;
+            },
+          },
+    openMicPermission: () => {
+      opened.count += 1;
+    },
+    newRequestId: () => `voz-${(ids += 1)}`,
+    transcribeTimeoutMs: options.timeoutMs ?? 100_000,
+  });
+  return { view, sent, root, recorders, opened, rec: () => recorders[recorders.length - 1] as FakeRecorder };
+}
+
+const flush = async (): Promise<void> => {
+  for (let i = 0; i < 6; i += 1) await Promise.resolve();
+};
+const mic = (h: Harness): HTMLButtonElement => q<HTMLButtonElement>(h, 'mic');
+const input = (h: Harness): HTMLTextAreaElement => q<HTMLTextAreaElement>(h, 'task-input');
+const voiceText = (h: Harness): string => text(q(h, 'voice-status'));
+
+async function startRecording(h: VoiceHarness): Promise<FakeRecorder> {
+  online(h);
+  mic(h).click();
+  const recorder = h.rec();
+  recorder.grant();
+  await flush();
+  return recorder;
+}
+
+async function finishWithTranscript(h: VoiceHarness, transcript: string): Promise<void> {
+  await startRecording(h);
+  mic(h).click();
+  const request = h.sent.at(-1);
+  if (request?.type !== 'voice.audio') throw new Error('No audio was sent');
+  sw(h, { type: 'voice.result', request_id: request.request_id, text: transcript });
+}
+
+describe('voice: the microphone button', () => {
+  it('sits next to Enviar with a visible label, an inline icon and a test id', () => {
+    const h = setupVoice();
+    const button = mic(h);
+    expect(button.dataset.testid).toBe('mic');
+    expect(text(button)).toBe('Hablar');
+    expect(button.parentElement).toBe(q(h, 'send').parentElement);
+    const svg = button.querySelector('svg');
+    expect(svg).not.toBeNull();
+    expect(button.querySelectorAll('svg[aria-hidden="true"]').length).toBe(button.querySelectorAll('svg').length);
+    expect(button.querySelector('img')).toBeNull();
+    expect(/\p{Extended_Pictographic}/u.test(button.textContent ?? '')).toBe(false);
+    expect(button.getAttribute('type')).toBe('button');
+  });
+
+  it('is hidden when the browser cannot record', () => {
+    const h = setupVoice({ voice: false });
+    expect(mic(h).hidden).toBe(true);
+    expect(q(h, 'voice').hidden).toBe(true);
+    online(h);
+    expect(mic(h).hidden).toBe(true);
+  });
+
+  it('is shown when the browser can record', () => {
+    const h = setupVoice();
+    expect(mic(h).hidden).toBe(false);
+  });
+
+  it('is disabled while disconnected and enabled once connected', () => {
+    const h = setupVoice();
+    expect(mic(h).disabled).toBe(true);
+    mic(h).click();
+    expect(h.recorders).toHaveLength(0);
+    online(h);
+    expect(mic(h).disabled).toBe(false);
+    h.view.dispatch({ type: 'port', up: false });
+    expect(mic(h).disabled).toBe(true);
+  });
+
+  it('keeps an aria-live status region, empty at first', () => {
+    const h = setupVoice();
+    const region = q(h, 'voice-status');
+    expect(region.getAttribute('aria-live')).toBe('polite');
+    expect(region.getAttribute('role')).toBe('status');
+    expect(voiceText(h)).toBe('');
+    expect(q(h, 'voice-level').hidden).toBe(true);
+    expect(q(h, 'voice-permission').hidden).toBe(true);
+  });
+
+  it('can be used while a task is running', async () => {
+    const h = setupVoice();
+    online(h);
+    sw(h, { type: 'run_state', state: 'running' });
+    expect(mic(h).disabled).toBe(false);
+  });
+});
+
+describe('voice: recording', () => {
+  it('asks for the microphone on click and shows the preparing state, disabled', () => {
+    const h = setupVoice();
+    online(h);
+    mic(h).click();
+    expect(h.recorders).toHaveLength(1);
+    expect(h.rec().started).toBe(1);
+    expect(h.view.getState().voice).toBe('starting');
+    expect(voiceText(h)).toBe('Preparando el micrófono…');
+    expect(mic(h).disabled).toBe(true);
+    expect(text(mic(h))).toBe('Hablar');
+  });
+
+  it('shows the listening state, the live level and turns the button into Listo', async () => {
+    const h = setupVoice();
+    await startRecording(h);
+    expect(h.view.getState().voice).toBe('recording');
+    expect(text(mic(h))).toBe('Listo');
+    expect(mic(h).dataset.phase).toBe('recording');
+    expect(mic(h).disabled).toBe(false);
+    expect(voiceText(h)).toContain('Estoy escuchando…');
+    expect(voiceText(h)).toContain('presione «Listo»');
+    const level = q(h, 'voice-level');
+    expect(level.hidden).toBe(false);
+    expect(level.getAttribute('aria-hidden')).toBe('true');
+    h.rec().hooks.onLevel?.(0.456);
+    expect(level.querySelector<HTMLElement>('.voice-level-bar')?.style.getPropertyValue('--level')).toBe('0.46');
+  });
+
+  it('does not touch the textarea or send a task while recording', async () => {
+    const h = setupVoice();
+    input(h).value = 'mi texto';
+    await startRecording(h);
+    expect(input(h).value).toBe('mi texto');
+    expect(h.sent.filter((m) => m.type === 'task.start')).toEqual([]);
+  });
+
+  it('clicking Listo sends the audio once and shows the transcribing state', async () => {
+    const h = setupVoice();
+    const recorder = await startRecording(h);
+    mic(h).click();
+    expect(recorder.finished).toBe(1);
+    expect(h.sent).toEqual([{ type: 'voice.audio', request_id: 'voz-1', audio_base64: 'QUJD', duration_ms: 1234 }]);
+    expect(h.view.getState()).toMatchObject({ voice: 'transcribing', voiceRequestId: 'voz-1' });
+    expect(voiceText(h)).toBe('Escribiendo lo que dijo…');
+    expect(mic(h).disabled).toBe(true);
+    mic(h).click();
+    expect(h.sent).toHaveLength(1);
+    expect(h.recorders).toHaveLength(1);
+  });
+
+  it('the automatic stop finishes the recording the same way', async () => {
+    const h = setupVoice();
+    const recorder = await startRecording(h);
+    recorder.hooks.onAutoStop?.();
+    expect(recorder.finished).toBe(1);
+    expect(h.sent.map((m) => m.type)).toEqual(['voice.audio']);
+    expect(h.view.getState().voice).toBe('transcribing');
+  });
+
+  it('ignores an automatic stop that arrives after the recording ended', async () => {
+    const h = setupVoice();
+    const recorder = await startRecording(h);
+    mic(h).click();
+    recorder.hooks.onAutoStop?.();
+    expect(h.sent).toHaveLength(1);
+  });
+
+  it('uses a fresh request id for every recording', async () => {
+    const h = setupVoice();
+    await finishWithTranscript(h, 'uno');
+    mic(h).click();
+    h.rec().grant();
+    await flush();
+    mic(h).click();
+    const ids = h.sent.flatMap((m) => (m.type === 'voice.audio' ? [m.request_id] : []));
+    expect(ids).toEqual(['voz-1', 'voz-2']);
+  });
+});
+
+describe('voice: the transcript fills the text box', () => {
+  it('fills an empty box, focuses it with the caret at the end and sends nothing else', async () => {
+    const h = setupVoice();
+    await finishWithTranscript(h, 'busque videos de recetas');
+    expect(input(h).value).toBe('busque videos de recetas');
+    expect(document.activeElement).toBe(input(h));
+    expect(input(h).selectionStart).toBe(input(h).value.length);
+    expect(input(h).selectionEnd).toBe(input(h).value.length);
+    expect(h.sent.map((m) => m.type)).toEqual(['voice.audio']);
+    expect(h.view.getState().voice).toBe('idle');
+    expect(mic(h).disabled).toBe(false);
+    expect(text(mic(h))).toBe('Hablar');
+    expect(voiceText(h)).toBe('');
+  });
+
+  it('adds a single space when the box already has text', async () => {
+    const h = setupVoice();
+    online(h);
+    input(h).value = 'busque';
+    await finishWithTranscript(h, 'recetas de pozole');
+    expect(input(h).value).toBe('busque recetas de pozole');
+  });
+
+  it('does not double the space when the box already ends in whitespace', async () => {
+    const h = setupVoice();
+    online(h);
+    input(h).value = 'busque ';
+    await finishWithTranscript(h, 'recetas');
+    expect(input(h).value).toBe('busque recetas');
+    const second = setupVoice();
+    online(second);
+    input(second).value = 'busque\n';
+    await finishWithTranscript(second, 'recetas');
+    expect(input(second).value).toBe('busque\nrecetas');
+  });
+
+  it('collapses stray whitespace in the transcript', async () => {
+    const h = setupVoice();
+    await finishWithTranscript(h, '  busque   videos\n de  recetas  ');
+    expect(input(h).value).toBe('busque videos de recetas');
+  });
+
+  it('keeps the box within its length limit', async () => {
+    const h = setupVoice();
+    online(h);
+    input(h).value = 'a'.repeat(3990);
+    await finishWithTranscript(h, 'b'.repeat(100));
+    expect(input(h).value).toHaveLength(4000);
+    expect(input(h).value.startsWith('a'.repeat(3990))).toBe(true);
+  });
+
+  it('puts markup in the box as plain text', async () => {
+    const h = setupVoice();
+    await finishWithTranscript(h, '<img src=x onerror="window.__pwned=1"><b>hola</b>');
+    expect(input(h).value).toBe('<img src=x onerror="window.__pwned=1"><b>hola</b>');
+    expect(h.root.querySelectorAll('img[src="x"], b').length).toBe(0);
+    expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
+  });
+
+  it('the user still has to press Enviar, and then the task goes through the normal path', async () => {
+    const h = setupVoice();
+    await finishWithTranscript(h, 'busque recetas');
+    expect(h.sent.some((m) => m.type === 'task.start')).toBe(false);
+    q(h, 'send').click();
+    expect(h.sent.at(-1)).toEqual({ type: 'task.start', text: 'busque recetas' });
+  });
+
+  it('a blank transcript says nothing was heard and leaves the box alone', async () => {
+    const h = setupVoice();
+    online(h);
+    input(h).value = 'hola';
+    await finishWithTranscript(h, '   ');
+    expect(input(h).value).toBe('hola');
+    expect(text(q(h, 'voice-error'))).toBe(tEs('voiceErrEmpty'));
+  });
+
+  it('ignores a transcript for a request it does not know', async () => {
+    const h = setupVoice();
+    await startRecording(h);
+    mic(h).click();
+    sw(h, { type: 'voice.result', request_id: 'otro', text: 'intruso' });
+    expect(input(h).value).toBe('');
+    expect(h.view.getState().voice).toBe('transcribing');
+  });
+
+  it('ignores a transcript that arrives after a task was sent', async () => {
+    const h = setupVoice();
+    await startRecording(h);
+    input(h).value = 'otra tarea';
+    mic(h).click();
+    q(h, 'send').click();
+    sw(h, { type: 'voice.result', request_id: 'voz-1', text: 'tarde' });
+    expect(input(h).value).toBe('');
+    expect(h.view.getState().voice).toBe('idle');
+  });
+});
+
+describe('voice: errors', () => {
+  it.each([
+    ['no_connection', 'voiceErrNoConnection'],
+    ['timeout', 'voiceErrTimeout'],
+    ['busy', 'voiceErrBusy'],
+    ['not_configured', 'voiceErrNotConfigured'],
+    ['provider', 'voiceErrProvider'],
+    ['bad_audio', 'voiceErrBadAudio'],
+    ['empty', 'voiceErrEmpty'],
+  ] as const)('shows the readable text for %s, never the provider message', async (code, key) => {
+    const h = setupVoice();
+    await startRecording(h);
+    mic(h).click();
+    sw(h, { type: 'voice.error', request_id: 'voz-1', code, message: 'detalle técnico del proveedor' });
+    const error = q(h, 'voice-error');
+    expect(text(error)).toBe(tEs(key));
+    expect(text(error)).not.toContain('proveedor');
+    expect(tEs(key)).not.toBe(key);
+    expect(error.closest('[aria-live="polite"]')).toBe(q(h, 'voice-status'));
+    expect(h.view.getState().voice).toBe('idle');
+    expect(mic(h).disabled).toBe(false);
+    expect(input(h).value).toBe('');
+  });
+
+  it('clears the error when the next attempt starts', async () => {
+    const h = setupVoice();
+    await startRecording(h);
+    mic(h).click();
+    sw(h, { type: 'voice.error', request_id: 'voz-1', code: 'busy', message: 'x' });
+    expect(h.root.querySelector('[data-testid=voice-error]')).not.toBeNull();
+    mic(h).click();
+    expect(h.root.querySelector('[data-testid=voice-error]')).toBeNull();
+    expect(h.view.getState().voiceError).toBeNull();
+    expect(voiceText(h)).toBe('Preparando el micrófono…');
+  });
+
+  it('a permission refusal explains itself and offers Dar permiso', async () => {
+    const h = setupVoice();
+    online(h);
+    mic(h).click();
+    h.rec().deny(Object.assign(new Error('refused'), { name: 'NotAllowedError' }));
+    await flush();
+    expect(h.view.getState()).toMatchObject({ voice: 'idle', voiceError: 'permission' });
+    expect(text(q(h, 'voice-error'))).toBe(tEs('voiceErrPermission'));
+    const grant = q<HTMLButtonElement>(h, 'voice-permission');
+    expect(grant.hidden).toBe(false);
+    expect(text(grant)).toBe('Dar permiso');
+    expect(h.recorders).toHaveLength(1);
+    grant.click();
+    expect(h.opened.count).toBe(1);
+  });
+
+  it('hides Dar permiso again on the next attempt and for other errors', async () => {
+    const h = setupVoice();
+    online(h);
+    mic(h).click();
+    h.rec().deny(new VoiceCaptureError('permission', 'x'));
+    await flush();
+    mic(h).click();
+    expect(q(h, 'voice-permission').hidden).toBe(true);
+    h.rec().deny(new VoiceCaptureError('no_device', 'x'));
+    await flush();
+    expect(text(q(h, 'voice-error'))).toBe(tEs('voiceErrNoDevice'));
+    expect(q(h, 'voice-permission').hidden).toBe(true);
+  });
+
+  it.each([
+    [new VoiceCaptureError('mic_busy', 'x'), 'voiceErrMicBusy'],
+    [new VoiceCaptureError('unsupported', 'x'), 'voiceErrCapture'],
+    [new VoiceCaptureError('capture', 'x'), 'voiceErrCapture'],
+    [new Error('surprise'), 'voiceErrCapture'],
+  ])('maps the recorder failure %# to its message', async (error, key) => {
+    const h = setupVoice();
+    online(h);
+    mic(h).click();
+    h.rec().deny(error);
+    await flush();
+    expect(text(q(h, 'voice-error'))).toBe(tEs(key));
+  });
+
+  it('a recording that is too short reports that nothing was heard and frees the microphone', async () => {
+    const h = setupVoice();
+    const recorder = await startRecording(h);
+    recorder.finishError = new VoiceCaptureError('empty', 'too short');
+    mic(h).click();
+    expect(recorder.cancelled).toBeGreaterThan(0);
+    expect(text(q(h, 'voice-error'))).toBe(tEs('voiceErrEmpty'));
+    expect(h.sent).toEqual([]);
+    expect(h.view.getState().voice).toBe('idle');
+  });
+
+  it('reports no connection when the audio cannot be delivered', async () => {
+    const h = setupVoice({ sendOk: false });
+    online(h);
+    mic(h).click();
+    h.rec().grant();
+    await flush();
+    mic(h).click();
+    expect(h.view.getState()).toMatchObject({ voice: 'idle', voiceError: 'no_connection' });
+    expect(text(q(h, 'voice-error'))).toBe(tEs('voiceErrNoConnection'));
+  });
+
+  it('gives up with a timeout error when the worker never answers, and ignores the late answer', async () => {
+    const h = setupVoice({ timeoutMs: 5000 });
+    await startRecording(h);
+    mic(h).click();
+    vi.advanceTimersByTime(4999);
+    expect(h.view.getState().voice).toBe('transcribing');
+    vi.advanceTimersByTime(1);
+    expect(h.view.getState()).toMatchObject({ voice: 'idle', voiceError: 'timeout' });
+    expect(text(q(h, 'voice-error'))).toBe(tEs('voiceErrTimeout'));
+    sw(h, { type: 'voice.result', request_id: 'voz-1', text: 'tarde' });
+    expect(input(h).value).toBe('');
+  });
+
+  it('does not fire the timeout once the answer arrived', async () => {
+    const h = setupVoice({ timeoutMs: 5000 });
+    await finishWithTranscript(h, 'hola');
+    vi.advanceTimersByTime(60_000);
+    expect(h.view.getState().voiceError).toBeNull();
+  });
+
+  it('puts the focus back on the button after an error when it lost it', async () => {
+    const h = setupVoice();
+    online(h);
+    mic(h).focus();
+    mic(h).click();
+    mic(h).blur();
+    h.rec().deny(new VoiceCaptureError('no_device', 'x'));
+    await flush();
+    expect(document.activeElement).toBe(mic(h));
+  });
+});
+
+describe('voice: the microphone is always released', () => {
+  it('when the user clicks the button again', async () => {
+    const h = setupVoice();
+    const recorder = await startRecording(h);
+    mic(h).click();
+    expect(recorder.finished).toBe(1);
+    expect(recorder.active).toBe(false);
+  });
+
+  it('when the link to the worker drops during the recording', async () => {
+    const h = setupVoice();
+    const recorder = await startRecording(h);
+    h.view.dispatch({ type: 'port', up: false });
+    expect(recorder.cancelled).toBe(1);
+    expect(recorder.active).toBe(false);
+    expect(h.view.getState()).toMatchObject({ voice: 'idle', voiceError: 'no_connection' });
+    expect(text(q(h, 'voice-error'))).toBe(tEs('voiceErrNoConnection'));
+    expect(h.sent).toEqual([]);
+  });
+
+  it('when the bridge drops during the recording', async () => {
+    const h = setupVoice();
+    const recorder = await startRecording(h);
+    sw(h, { type: 'status', connected: false, halted: false, running: false });
+    expect(recorder.cancelled).toBe(1);
+    expect(h.view.getState().voice).toBe('idle');
+  });
+
+  it('when the link drops while the permission prompt is open, even if the stream arrives later', async () => {
+    const h = setupVoice();
+    online(h);
+    mic(h).click();
+    const recorder = h.rec();
+    h.view.dispatch({ type: 'port', up: false });
+    expect(recorder.cancelled).toBe(1);
+    recorder.grant();
+    await flush();
+    expect(h.view.getState().voice).toBe('idle');
+    expect(h.sent).toEqual([]);
+  });
+
+  it('when the panel unloads', async () => {
+    const h = setupVoice();
+    const recorder = await startRecording(h);
+    window.dispatchEvent(new Event('pagehide'));
+    expect(recorder.cancelled).toBe(1);
+    expect(recorder.active).toBe(false);
+  });
+
+  it('when the panel unloads during the permission prompt', async () => {
+    const h = setupVoice();
+    online(h);
+    mic(h).click();
+    const recorder = h.rec();
+    window.dispatchEvent(new Event('pagehide'));
+    expect(recorder.cancelled).toBe(1);
+    recorder.grant();
+    await flush();
+    expect(h.view.getState().voice).toBe('starting');
+  });
+
+  it('when the view is disposed, and the unload listener goes away with it', async () => {
+    const h = setupVoice();
+    const recorder = await startRecording(h);
+    h.view.dispose();
+    expect(recorder.cancelled).toBe(1);
+    window.dispatchEvent(new Event('pagehide'));
+    expect(recorder.cancelled).toBe(1);
+  });
+
+  it('when a task is sent in the middle of a recording', async () => {
+    const h = setupVoice();
+    const recorder = await startRecording(h);
+    input(h).value = 'busque recetas';
+    q(h, 'send').click();
+    expect(recorder.cancelled).toBe(1);
+    expect(h.view.getState().voice).toBe('idle');
+    expect(h.sent.at(-1)).toEqual({ type: 'task.start', text: 'busque recetas' });
+  });
+
+  it('when starting fails, the recorder is not kept around', async () => {
+    const h = setupVoice();
+    online(h);
+    mic(h).click();
+    h.rec().deny(new VoiceCaptureError('permission', 'x'));
+    await flush();
+    mic(h).click();
+    expect(h.recorders).toHaveLength(2);
+    h.rec().grant();
+    await flush();
+    expect(h.view.getState().voice).toBe('recording');
+  });
+});
+
+describe('voice: Stop is unrelated', () => {
+  it('Stop keeps working while recording, and the recording goes on', async () => {
+    const h = setupVoice();
+    const recorder = await startRecording(h);
+    sw(h, { type: 'run_state', state: 'running' });
+    expect(q(h, 'stop').hidden).toBe(false);
+    q(h, 'stop').click();
+    expect(h.sent).toEqual([{ type: 'stop' }]);
+    expect(recorder.cancelled).toBe(0);
+    expect(h.view.getState().voice).toBe('recording');
+    mic(h).click();
+    expect(h.sent.at(-1)).toMatchObject({ type: 'voice.audio' });
+  });
+
+  it('Stop keeps working while transcribing', async () => {
+    const h = setupVoice();
+    await startRecording(h);
+    mic(h).click();
+    sw(h, { type: 'run_state', state: 'running' });
+    q(h, 'stop').click();
+    expect(h.sent.at(-1)).toEqual({ type: 'stop' });
+    sw(h, { type: 'voice.result', request_id: 'voz-1', text: 'hola' });
+    expect(input(h).value).toBe('hola');
   });
 });

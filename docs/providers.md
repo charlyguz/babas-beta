@@ -53,6 +53,10 @@ If a local model is slow or loops with `auto`, try `json_object` or `none`.
 | `BABAS_HOME` | `~/.babas` | Pairing file and MCP screenshots |
 | `BABAS_MCP_HTTP_PORT` | `8766` | Port of `serve --mcp-http` |
 | `BABAS_LOG_LEVEL` | `INFO` | Logs go to stderr, with personal data masked |
+| `BABAS_STT_PROVIDER` | `auto` | Voice input backend: `auto`, `chat`, `whisper`, `local` or `off` (section 4) |
+| `BABAS_STT_MODEL` | by backend | `whisper-1` (whisper), the LLM model (chat), `small` (local) |
+| `BABAS_STT_BASE_URL` / `BABAS_STT_API_KEY` | the LLM ones | Only inherited when `BABAS_LLM_PROVIDER=openai` |
+| `BABAS_STT_LANGUAGE` | `BABAS_LANG` | Language hint for the transcription, e.g. `es` |
 
 An invalid value stops the command with a message that names the variable (exit code 2).
 
@@ -62,6 +66,9 @@ BABAS sends the text of the pages it works on (which may include personal data) 
 models receive it. Local models (Ollama, LM Studio) keep it on your machine. What you type as the task is sent as
 written; personal data typed into forms is always shown to you on a confirmation card first and is masked in logs and
 in the step history.
+
+Voice input sends the recording (up to 30 s, only after a click) to the speech backend you choose; with `local` it stays on
+your machine. BABAS never stores audio or transcripts and never logs them.
 
 ## 3. Using BABAS from MCP clients
 
@@ -121,3 +128,46 @@ against web pages and DNS-rebinding). It has no password, so do not expose it wi
   (a stale number answers `STALE_SNAPSHOT`).
 - `act` with the `screenshot` action saves the file under `~/.babas/screenshots/` (or `$BABAS_HOME/screenshots/`).
 - `run_task` masks personal data in its answer, like the side panel does.
+
+## 4. Voice input (speech to text)
+
+The **Hablar** button in the side panel records up to 30 seconds after a click. BABAS transcribes the audio and puts the
+text in the box; the person reads it, can edit it and presses "Enviar". Voice never starts a task by itself. The browser's
+own speech recognition is not used: Brave disables it.
+
+| `BABAS_STT_PROVIDER` | How it works | Needs |
+|---|---|---|
+| `chat` | The audio goes to a multimodal chat model through the OpenAI-compatible chat endpoint (Gemini, OpenRouter models with audio input) | A model that accepts audio |
+| `whisper` | `POST /audio/transcriptions` (OpenAI Whisper, Groq, ...) | An endpoint that has that route |
+| `local` | `faster-whisper` on this computer: no key, no internet after the first download | `pip install -e '.[stt]'` |
+| `off` | Voice disabled | |
+| `auto` (default) | Gemini host (`generativelanguage.googleapis.com`) or any other base URL: `chat`. No base URL or `api.openai.com`: `whisper` with `whisper-1`. Anthropic without STT settings: not configured | |
+
+`BABAS_STT_BASE_URL`, `BABAS_STT_API_KEY` and `BABAS_STT_MODEL` default to the LLM settings, but only when
+`BABAS_LLM_PROVIDER=openai`: an Anthropic key is never sent to a speech endpoint. A text-only model (for example Gemma)
+cannot hear: keep it as `BABAS_LLM_MODEL` and set `BABAS_STT_MODEL` to a model that accepts audio.
+
+**Gemini (same key as the LLM):**
+```
+BABAS_LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+BABAS_LLM_API_KEY=your_google_ai_studio_key
+BABAS_LLM_MODEL=a-gemini-model-id          # voice reuses the endpoint, key and model (auto -> chat)
+```
+Google documents audio input through its OpenAI-compatible API for Vertex AI. For the Gemini API endpoint it has not been
+checked from this repository, so the first live test matters: if it answers with a provider error, use `local`.
+
+**Groq Whisper:** `BABAS_STT_PROVIDER=whisper`, `BABAS_STT_BASE_URL=https://api.groq.com/openai/v1`,
+`BABAS_STT_API_KEY=gsk_...`, `BABAS_STT_MODEL=whisper-large-v3`.
+
+**Local (open source, offline):**
+```bash
+pip install -e '.[stt]'
+python -c "from faster_whisper import WhisperModel; WhisperModel('small')"   # downloads about 0.5 GB once
+```
+```
+BABAS_STT_PROVIDER=local
+BABAS_STT_MODEL=small          # tiny, base, small, medium: larger is more accurate and slower
+```
+Do the pre-download step: the first transcription would otherwise download the model and can exceed the panel's 90 second
+limit. Runs on the CPU (int8).
+

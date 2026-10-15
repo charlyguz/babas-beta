@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import logging
 import re
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 import pytest
-from helpers import FakeDriver, FakeLLM, make_element, make_state
+from helpers import EventBridge, FakeDriver, FakeLLM, FakeSTT, make_element, make_state
 from websockets.asyncio.client import ClientConnection, connect
 
 import babas.session as session_module
@@ -26,6 +27,16 @@ from babas.drivers.base import BrowserDriver, DriverError, ErrorCode, PageState
 from babas.llm import LLMConfigError, LLMError
 from babas.safety import SafetyPolicy
 from babas.session import BUSY_TEXT, DISCONNECTED_TEXT, FAILED_TEXT, MISSING_KEY_TEXT, Session
+from babas.stt import (
+    BAD_AUDIO_TEXT,
+    EMPTY_TEXT,
+    ERROR_CODES,
+    NOT_CONFIGURED_TEXT,
+    PROVIDER_TEXT,
+    STT_BUSY_TEXT,
+    STTConfigError,
+    STTError,
+)
 
 ORIGIN = f"chrome-extension://{PINNED_EXTENSION_ID}"
 WAIT = 3.0
@@ -1100,3 +1111,401 @@ async def test_serve_refuses_an_uncreatable_pairing_location(tmp_path: Path, cap
         await run_serve(serve_settings(blocker / "home"), False)
     assert info.value.code == 1
     assert "Cannot create the pairing folder" in capsys.readouterr().out
+
+
+VOICE_ID = "voice-1"
+WAV_BYTES = b"RIFF\x24\x00\x00\x00WAVEfmt " + bytes(range(200)) + b"\r\n--\r\n"
+SPOKEN = "mi CURP es GOMC800101HDFRRN09 y quiero mi acta"
+MAX_WAV = 3 * 1024 * 1024
+
+
+def voice_payload(audio: bytes = WAV_BYTES, **changes: Any) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "request_id": VOICE_ID,
+        "audio_base64": base64.b64encode(audio).decode("ascii"),
+        "mime": "audio/wav",
+        "duration_ms": 1500,
+    }
+    for key, value in changes.items():
+        if value is DROP:
+            payload.pop(key, None)
+        else:
+            payload[key] = value
+    return payload
+
+
+DROP = object()
+
+
+def transcripts(bridge: EventBridge) -> List[Dict[str, Any]]:
+    return [payload for payload, _timeout in bridge.requests_of("ui.transcript")]
+
+
+def error_of(payload: Dict[str, Any]) -> Tuple[str, str]:
+    assert set(payload) == {"request_id", "error"}
+    return payload["error"]["code"], payload["error"]["message"]
+
+
+def voice_rig(stt: Any = None, **kwargs: Any) -> Tuple[EventBridge, Session, FakeSTT]:
+    fake = stt if stt is not None else FakeSTT("hola")
+    bridge = EventBridge()
+    kwargs.setdefault("language", "es")
+    session = Session(bridge, lambda: FakeLLM(), SafetyPolicy(), stt_factory=lambda: fake, **kwargs)
+    return bridge, session, fake
+
+
+async def test_dictation_returns_the_text_through_ui_transcript() -> None:
+    bridge, _session, fake = voice_rig(FakeSTT("  quiero ver videos de cocina \n"))
+    await bridge.fire("stt.transcribe", voice_payload())
+
+    assert transcripts(bridge) == [{"request_id": VOICE_ID, "text": "quiero ver videos de cocina"}]
+    assert [timeout for _payload, timeout in bridge.requests_of("ui.transcript")] == [10.0]
+    assert fake.calls == [(len(WAV_BYTES), "audio/wav", "es")]
+    assert [kind for kind, _payload, _timeout in bridge.requests] == ["ui.transcript"]
+
+
+async def test_the_interface_language_is_passed_to_the_transcriber() -> None:
+    bridge, _session, fake = voice_rig(language="en")
+    await bridge.fire("stt.transcribe", voice_payload())
+    assert fake.calls[0][2] == "en"
+
+
+async def test_long_text_is_clipped_to_4000_characters() -> None:
+    bridge, _session, _fake = voice_rig(FakeSTT("palabra " * 1000))
+    await bridge.fire("stt.transcribe", voice_payload())
+    (reply,) = transcripts(bridge)
+    assert set(reply) == {"request_id", "text"} and len(reply["text"]) <= 4000
+
+
+@pytest.mark.parametrize("result, expected", [("   ", "empty"), ("", "empty"), (None, "provider"), (7, "provider"), (["x"], "provider")])
+async def test_unusable_transcripts_become_errors(result: Any, expected: str) -> None:
+    bridge, _session, _fake = voice_rig(FakeSTT(result))
+    await bridge.fire("stt.transcribe", voice_payload())
+    (reply,) = transcripts(bridge)
+    assert error_of(reply)[0] == expected
+
+
+@pytest.mark.parametrize("code", ERROR_CODES)
+async def test_transcriber_errors_are_forwarded_with_their_code_and_message(code: str) -> None:
+    bridge, _session, _fake = voice_rig(FakeSTT(STTError(code, "Mensaje seguro para la persona.")))
+    await bridge.fire("stt.transcribe", voice_payload())
+    assert transcripts(bridge) == [{"request_id": VOICE_ID, "error": {"code": code, "message": "Mensaje seguro para la persona."}}]
+
+
+async def test_an_unknown_error_code_is_reported_as_a_provider_error() -> None:
+    bridge, _session, _fake = voice_rig(FakeSTT(STTError("exploded", "Algo salió mal.")))
+    await bridge.fire("stt.transcribe", voice_payload())
+    assert error_of(transcripts(bridge)[0]) == ("provider", "Algo salió mal.")
+
+
+async def test_error_messages_are_masked_and_bounded() -> None:
+    bridge, _session, _fake = voice_rig(FakeSTT(STTError("provider", f"{CURP} " + "x" * 2000)))
+    await bridge.fire("stt.transcribe", voice_payload())
+    code, message = error_of(transcripts(bridge)[0])
+    assert code == "provider" and CURP not in message and len(message) <= 500
+
+
+async def test_unexpected_exceptions_become_a_generic_provider_error(caplog: pytest.LogCaptureFixture) -> None:
+    bridge, _session, _fake = voice_rig(FakeSTT(RuntimeError(f"boom {SPOKEN}")))
+    with caplog.at_level(logging.DEBUG, logger="babas"):
+        await bridge.fire("stt.transcribe", voice_payload())
+    assert error_of(transcripts(bridge)[0]) == ("provider", PROVIDER_TEXT)
+    assert "RuntimeError" in caplog.text and CURP not in caplog.text and CURP not in json.dumps(transcripts(bridge))
+
+
+BAD_PAYLOADS = {
+    "no audio": {"audio_base64": DROP},
+    "audio none": {"audio_base64": None},
+    "audio number": {"audio_base64": 12},
+    "audio list": {"audio_base64": ["QUJD"]},
+    "audio bytes": {"audio_base64": b"QUJD"},
+    "audio empty": {"audio_base64": ""},
+    "audio blanks": {"audio_base64": "    "},
+    "audio not base64": {"audio_base64": "@@@@"},
+    "audio bad padding": {"audio_base64": "QUJDRA"},
+    "audio newline": {"audio_base64": "QUJD\nREVG"},
+    "audio space": {"audio_base64": "QUJD REVG"},
+    "audio url safe": {"audio_base64": "_-_-"},
+    "audio after padding": {"audio_base64": "QUJD=QUJD"},
+    "audio non ascii": {"audio_base64": "QUJDé"},
+    "audio too many chars": {"audio_base64": "A" * (4 * ((MAX_WAV + 2) // 3) + 4)},
+    "no mime": {"mime": DROP},
+    "mime none": {"mime": None},
+    "mime number": {"mime": 5},
+    "mime webm": {"mime": "audio/webm"},
+    "mime upper": {"mime": "AUDIO/WAV"},
+    "mime params": {"mime": "audio/wav; codecs=1"},
+    "mime x-wav": {"mime": "audio/x-wav"},
+    "no duration": {"duration_ms": DROP},
+    "duration none": {"duration_ms": None},
+    "duration zero": {"duration_ms": 0},
+    "duration negative": {"duration_ms": -5},
+    "duration too long": {"duration_ms": 30001},
+    "duration huge": {"duration_ms": 10**12},
+    "duration float": {"duration_ms": 1500.5},
+    "duration whole float": {"duration_ms": 1500.0},
+    "duration text": {"duration_ms": "1500"},
+    "duration bool": {"duration_ms": True},
+}
+
+
+@pytest.mark.parametrize("changes", BAD_PAYLOADS.values(), ids=list(BAD_PAYLOADS))
+async def test_a_bad_payload_gets_bad_audio_and_never_reaches_the_transcriber(changes: Dict[str, Any]) -> None:
+    bridge, _session, fake = voice_rig()
+    await bridge.fire("stt.transcribe", voice_payload(**changes))
+    assert [error_of(reply) for reply in transcripts(bridge)] == [("bad_audio", BAD_AUDIO_TEXT)]
+    assert transcripts(bridge)[0]["request_id"] == VOICE_ID
+    assert fake.calls == []
+
+
+async def test_audio_over_three_mebibytes_is_refused_and_exactly_three_is_accepted() -> None:
+    bridge, _session, fake = voice_rig()
+    await bridge.fire("stt.transcribe", voice_payload(b"\x01" * (MAX_WAV + 1)))
+    assert error_of(transcripts(bridge)[0])[0] == "bad_audio" and fake.calls == []
+
+    await bridge.fire("stt.transcribe", voice_payload(b"\x01" * MAX_WAV, request_id="voice-2"))
+    assert transcripts(bridge)[1] == {"request_id": "voice-2", "text": "hola"}
+    assert fake.calls == [(MAX_WAV, "audio/wav", "es")]
+
+
+@pytest.mark.parametrize("duration", [1, 30000])
+async def test_the_duration_bounds_are_inclusive(duration: int) -> None:
+    bridge, _session, fake = voice_rig()
+    await bridge.fire("stt.transcribe", voice_payload(duration_ms=duration))
+    assert transcripts(bridge) == [{"request_id": VOICE_ID, "text": "hola"}] and len(fake.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        voice_payload(request_id=DROP),
+        voice_payload(request_id=""),
+        voice_payload(request_id=5),
+        voice_payload(request_id=None),
+        voice_payload(request_id=["a"]),
+        voice_payload(request_id="x" * 129),
+        {},
+        "texto",
+        ["x"],
+        7,
+    ],
+    ids=["missing", "empty", "number", "none", "list", "too long", "empty payload", "string", "array", "integer"],
+)
+async def test_a_request_without_a_usable_id_is_ignored_without_raising(payload: Any) -> None:
+    bridge, _session, fake = voice_rig()
+    await bridge.fire("stt.transcribe", payload)
+    assert bridge.requests == [] and fake.calls == []
+
+
+async def test_the_longest_request_id_is_answered_with_that_id() -> None:
+    bridge, _session, _fake = voice_rig()
+    await bridge.fire("stt.transcribe", voice_payload(request_id="r" * 128))
+    assert transcripts(bridge) == [{"request_id": "r" * 128, "text": "hola"}]
+
+
+async def test_a_second_request_gets_busy_while_one_is_running() -> None:
+    gate = asyncio.Event()
+    bridge, _session, fake = voice_rig(FakeSTT("primera", gate=gate))
+    first = asyncio.create_task(bridge.fire("stt.transcribe", voice_payload(request_id="voice-a")))
+    await asyncio.wait_for(fake.started.wait(), WAIT)
+
+    await bridge.fire("stt.transcribe", voice_payload(request_id="voice-b"))
+    assert [(item["request_id"], error_of(item)) for item in transcripts(bridge)] == [("voice-b", ("busy", STT_BUSY_TEXT))]
+    assert len(fake.calls) == 1 and not first.done()
+
+    gate.set()
+    await asyncio.wait_for(first, WAIT)
+    assert transcripts(bridge)[1] == {"request_id": "voice-a", "text": "primera"}
+
+    await bridge.fire("stt.transcribe", voice_payload(request_id="voice-c"))
+    assert transcripts(bridge)[2] == {"request_id": "voice-c", "text": "primera"}
+
+
+async def test_a_failed_transcription_frees_the_slot() -> None:
+    fake = FakeSTT(lambda audio, mime, language: "bien")
+    bridge, _session, _ = voice_rig(fake)
+    fake.result = STTError("provider", "Falló.")
+    await bridge.fire("stt.transcribe", voice_payload(request_id="voice-a"))
+    fake.result = "bien"
+    await bridge.fire("stt.transcribe", voice_payload(request_id="voice-b"))
+    assert [item["request_id"] for item in transcripts(bridge)] == ["voice-a", "voice-b"]
+    assert error_of(transcripts(bridge)[0]) == ("provider", "Falló.") and transcripts(bridge)[1]["text"] == "bien"
+
+
+async def test_a_session_without_a_speech_backend_answers_not_configured() -> None:
+    bridge = EventBridge()
+    Session(bridge, lambda: FakeLLM(), SafetyPolicy())
+    await bridge.fire("stt.transcribe", voice_payload())
+    assert [error_of(reply) for reply in transcripts(bridge)] == [("not_configured", NOT_CONFIGURED_TEXT)]
+
+
+async def test_a_factory_configuration_error_is_forwarded_and_retried_next_time() -> None:
+    built: List[FakeSTT] = []
+
+    def factory() -> FakeSTT:
+        if not built:
+            built.append(FakeSTT("listo"))
+            raise STTConfigError("Falta algo en la configuración.")
+        return built[0]
+
+    bridge = EventBridge()
+    Session(bridge, lambda: FakeLLM(), SafetyPolicy(), stt_factory=factory)
+    await bridge.fire("stt.transcribe", voice_payload(request_id="voice-a"))
+    await bridge.fire("stt.transcribe", voice_payload(request_id="voice-b"))
+    assert error_of(transcripts(bridge)[0]) == ("not_configured", "Falta algo en la configuración.")
+    assert transcripts(bridge)[1] == {"request_id": "voice-b", "text": "listo"}
+
+
+async def test_a_crashing_factory_is_a_provider_error_without_its_text(caplog: pytest.LogCaptureFixture) -> None:
+    def factory() -> FakeSTT:
+        raise RuntimeError(f"cannot build for {SPOKEN}")
+
+    bridge = EventBridge()
+    Session(bridge, lambda: FakeLLM(), SafetyPolicy(), stt_factory=factory)
+    with caplog.at_level(logging.DEBUG, logger="babas"):
+        await bridge.fire("stt.transcribe", voice_payload())
+    assert error_of(transcripts(bridge)[0]) == ("provider", PROVIDER_TEXT)
+    assert "RuntimeError" in caplog.text and CURP not in caplog.text and CURP not in json.dumps(transcripts(bridge))
+
+
+async def test_the_transcriber_is_reused_and_closed_when_the_session_stops() -> None:
+    built: List[FakeSTT] = []
+
+    def factory() -> FakeSTT:
+        built.append(FakeSTT("hola"))
+        return built[-1]
+
+    bridge = EventBridge()
+    session = Session(bridge, lambda: FakeLLM(), SafetyPolicy(), stt_factory=factory)
+    await bridge.fire("stt.transcribe", voice_payload(request_id="voice-a"))
+    await bridge.fire("stt.transcribe", voice_payload(request_id="voice-b"))
+    assert len(built) == 1 and built[0].closed == 0 and len(built[0].calls) == 2
+
+    await session.stop()
+    assert built[0].closed == 1
+    await session.stop()
+    assert built[0].closed == 1
+
+    await bridge.fire("stt.transcribe", voice_payload(request_id="voice-c"))
+    assert len(built) == 2 and transcripts(bridge)[-1] == {"request_id": "voice-c", "text": "hola"}
+
+
+async def test_stop_cancels_a_running_transcription_without_answering_it() -> None:
+    gate = asyncio.Event()
+    bridge, session, fake = voice_rig(FakeSTT("nunca", gate=gate))
+    task = asyncio.create_task(bridge.fire("stt.transcribe", voice_payload()))
+    await asyncio.wait_for(fake.started.wait(), WAIT)
+
+    await session.stop()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert fake.closed == 1 and transcripts(bridge) == []
+
+    fresh = FakeSTT("otra")
+    session.stt_factory = lambda: fresh
+    await bridge.fire("stt.transcribe", voice_payload(request_id="voice-b"))
+    assert transcripts(bridge) == [{"request_id": "voice-b", "text": "otra"}]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [DriverError(ErrorCode.NO_EXTENSION, "The extension disconnected"), DriverError(ErrorCode.TIMEOUT, "slow"), RuntimeError("weird"), ValueError("bad")],
+)
+async def test_a_reply_that_cannot_be_delivered_is_swallowed(failure: Exception, caplog: pytest.LogCaptureFixture) -> None:
+    bridge, _session, fake = voice_rig()
+    bridge.responses["ui.transcript"] = failure
+    with caplog.at_level(logging.DEBUG, logger="babas"):
+        await bridge.fire("stt.transcribe", voice_payload())
+        await bridge.fire("stt.transcribe", voice_payload(request_id="voice-b"))
+        await bridge.fire("stt.transcribe", voice_payload(audio_base64="@@", request_id="voice-c"))
+    assert len(bridge.requests_of("ui.transcript")) == 3 and len(fake.calls) == 2
+    assert "could not deliver the transcript" in caplog.text
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+
+
+async def test_nothing_private_is_logged_for_voice_requests(caplog: pytest.LogCaptureFixture) -> None:
+    gate = asyncio.Event()
+    fake = FakeSTT(SPOKEN, gate=gate)
+    bridge, _session, _ = voice_rig(fake)
+    encoded = base64.b64encode(WAV_BYTES).decode("ascii")
+    with caplog.at_level(logging.DEBUG):
+        first = asyncio.create_task(bridge.fire("stt.transcribe", voice_payload(request_id="voice-a")))
+        await asyncio.wait_for(fake.started.wait(), WAIT)
+        await bridge.fire("stt.transcribe", voice_payload(request_id="voice-b"))
+        await bridge.fire("stt.transcribe", voice_payload(audio_base64="@@@@", request_id="voice-c"))
+        gate.set()
+        await first
+        fake.result = STTError("provider", f"fallo con {SPOKEN}")
+        await bridge.fire("stt.transcribe", voice_payload(request_id="voice-d"))
+        fake.result = RuntimeError(SPOKEN)
+        await bridge.fire("stt.transcribe", voice_payload(request_id="voice-e"))
+    text = caplog.text
+    assert "voice transcription started" in text and "voice transcription finished" in text
+    assert SPOKEN not in text and CURP not in text and encoded not in text and encoded[:40] not in text and "RIFF" not in text
+
+
+async def test_dictation_does_not_depend_on_the_run_state_or_other_controllers() -> None:
+    bridge, session, fake = voice_rig(busy=lambda: True)
+    await bridge.fire("stt.transcribe", voice_payload())
+    assert transcripts(bridge) == [{"request_id": VOICE_ID, "text": "hola"}]
+    assert not session.running and fake.calls
+
+
+async def test_dictation_round_trip_over_the_real_bridge(bridge: BridgeServer, ext: FakeExtension) -> None:
+    fake = FakeSTT("busca recetas de pozole")
+    make_session(bridge, FakeLLM(), stt_factory=lambda: fake, language="es")
+
+    await ext.send_event("stt.transcribe", voice_payload())
+    await ext.until(lambda: bool(ext.of("ui.transcript")), "the transcript")
+    assert ext.of("ui.transcript") == [{"request_id": VOICE_ID, "text": "busca recetas de pozole"}]
+    assert fake.calls == [(len(WAV_BYTES), "audio/wav", "es")]
+
+    await ext.send_event("stt.transcribe", voice_payload(mime="audio/webm", request_id="voice-2"))
+    await ext.until(lambda: len(ext.of("ui.transcript")) == 2, "the error")
+    assert error_of(ext.of("ui.transcript")[1]) == ("bad_audio", BAD_AUDIO_TEXT)
+    assert ext.of("ui.run_state") == [] and ext.of("ui.log") == []
+
+
+async def test_dictation_while_a_task_runs_leaves_the_task_alone(bridge: BridgeServer, ext: FakeExtension) -> None:
+    llm = FakeLLM(delay=30)
+    fake = FakeSTT("hola")
+    session = make_session(bridge, llm, stt_factory=lambda: fake)
+
+    await ext.start_task("tarea larga")
+    await ext.until_state("running")
+    await ext.until(lambda: bool(ext.of("page.state")), "the run to wait on the model")
+    await ext.send_event("stt.transcribe", voice_payload())
+    await ext.until(lambda: bool(ext.of("ui.transcript")), "the transcript")
+
+    assert ext.of("ui.transcript") == [{"request_id": VOICE_ID, "text": "hola"}]
+    assert session.running and ext.run_states() == [("running", "")]
+    assert ("info", BUSY_TEXT) not in ext.logs()
+
+    await ext.stop()
+    await ext.until_state("stopped")
+    await settled(session)
+    await ext.send_event("stt.transcribe", voice_payload(request_id="voice-2"))
+    await ext.until(lambda: len(ext.of("ui.transcript")) == 2, "the second transcript")
+
+
+async def test_stop_and_new_tasks_do_not_disturb_a_transcription_in_progress(bridge: BridgeServer, ext: FakeExtension) -> None:
+    gate = asyncio.Event()
+    fake = FakeSTT("seguía escuchando", gate=gate)
+    session = make_session(bridge, FakeLLM(delay=30), stt_factory=lambda: fake)
+
+    await ext.send_event("stt.transcribe", voice_payload())
+    await asyncio.wait_for(fake.started.wait(), WAIT)
+    await ext.start_task("tarea larga")
+    await ext.until_state("running")
+    await ext.stop()
+    await ext.until_state("stopped")
+    await settled(session)
+    assert ext.of("ui.transcript") == []
+
+    await ext.send_event("stt.transcribe", voice_payload(request_id="voice-2"))
+    await ext.until(lambda: bool(ext.of("ui.transcript")), "the busy answer")
+    assert error_of(ext.of("ui.transcript")[0]) == ("busy", STT_BUSY_TEXT)
+
+    gate.set()
+    await ext.until(lambda: len(ext.of("ui.transcript")) == 2, "the first transcript")
+    assert ext.of("ui.transcript")[1] == {"request_id": VOICE_ID, "text": "seguía escuchando"}

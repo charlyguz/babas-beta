@@ -20,7 +20,7 @@ const targets: Record<string, LibTarget> = {
 
 export default defineConfig(({ mode }): UserConfig => {
   if (mode === 'sidepanel') {
-    // App build of sidepanel.html. It must run after "sw", which empties dist first.
+    // App build of sidepanel.html and micpermission.html. It must run after "sw", which empties dist first.
     return {
       root,
       base: './',
@@ -35,8 +35,8 @@ export default defineConfig(({ mode }): UserConfig => {
         copyPublicDir: false,
         modulePreload: { polyfill: false },
         rollupOptions: {
-          input: `${root}sidepanel.html`,
-          output: { entryFileNames: 'assets/sidepanel.js', chunkFileNames: 'assets/[name].js', assetFileNames: 'assets/[name][extname]' },
+          input: { sidepanel: `${root}sidepanel.html`, micpermission: `${root}micpermission.html` },
+          output: { entryFileNames: 'assets/[name].js', chunkFileNames: 'assets/[name].js', assetFileNames: 'assets/[name][extname]' },
         },
       },
     };

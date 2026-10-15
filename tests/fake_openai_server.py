@@ -1,10 +1,14 @@
+import base64
 import json
 import threading
 from dataclasses import dataclass, field
+from email.parser import BytesParser
+from email.policy import HTTP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Iterable, List, Optional
 
 CHAT_PATH = "/v1/chat/completions"
+TRANSCRIPTIONS_PATH = "/v1/audio/transcriptions"
 
 
 @dataclass
@@ -23,12 +27,91 @@ class RecordedRequest:
         fmt = self.response_format
         return fmt.get("type") if isinstance(fmt, dict) else None
 
+    @property
+    def model(self) -> Optional[str]:
+        value = self.body.get("model") if isinstance(self.body, dict) else None
+        return value if isinstance(value, str) else None
+
+    @property
+    def language(self) -> Optional[str]:
+        value = self.body.get("language") if isinstance(self.body, dict) else None
+        return value if isinstance(value, str) else None
+
+    @property
+    def input_audio(self) -> Optional[dict]:
+        content = self._message_parts()
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "input_audio":
+                data = part.get("input_audio")
+                return data if isinstance(data, dict) else None
+        return None
+
+    @property
+    def audio_bytes(self) -> Optional[int]:
+        """Decoded size of the audio, for both chat input_audio parts and transcription uploads."""
+        if self.path == TRANSCRIPTIONS_PATH:
+            upload = self.body.get("file") if isinstance(self.body, dict) else None
+            return upload["size"] if isinstance(upload, dict) else None
+        audio = self.input_audio
+        if audio is None or not isinstance(audio.get("data"), str):
+            return None
+        return len(base64.b64decode(audio["data"]))
+
+    @property
+    def audio_format(self) -> Optional[str]:
+        audio = self.input_audio
+        return audio.get("format") if audio else None
+
+    @property
+    def audio_filename(self) -> Optional[str]:
+        upload = self.body.get("file") if isinstance(self.body, dict) else None
+        return upload.get("filename") if isinstance(upload, dict) else None
+
+    @property
+    def audio_content_type(self) -> Optional[str]:
+        upload = self.body.get("file") if isinstance(self.body, dict) else None
+        return upload.get("content_type") if isinstance(upload, dict) else None
+
+    @property
+    def text_prompt(self) -> Optional[str]:
+        for part in self._message_parts():
+            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                return part["text"]
+        return None
+
+    def _message_parts(self) -> list:
+        messages = self.body.get("messages") if isinstance(self.body, dict) else None
+        if not isinstance(messages, list):
+            return []
+        parts: list = []
+        for message in messages:
+            content = message.get("content") if isinstance(message, dict) else None
+            if isinstance(content, list):
+                parts.extend(content)
+        return parts
+
 
 @dataclass
 class _Reply:
     status: int
     body: Any
     headers: Dict[str, str] = field(default_factory=dict)
+
+
+def parse_multipart(content_type: str, raw: bytes) -> Dict[str, Any]:
+    message = BytesParser(policy=HTTP).parsebytes(f"Content-Type: {content_type}\r\n\r\n".encode("ascii") + raw)
+    fields: Dict[str, Any] = {}
+    for part in message.iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        if not isinstance(name, str):
+            continue
+        payload = part.get_payload(decode=True) or b""
+        filename = part.get_filename()
+        if filename is not None:
+            fields[name] = {"filename": filename, "content_type": part.get_content_type(), "size": len(payload)}
+        else:
+            fields[name] = payload.decode("utf-8", "replace")
+    return fields
 
 
 def error_body(message: str, code: Optional[str] = None, error_type: str = "invalid_request_error") -> dict:
@@ -80,6 +163,10 @@ class FakeOpenAIServer:
         with self._lock:
             return [request.format_type for request in self.requests]
 
+    def requests_to(self, path: str) -> List[RecordedRequest]:
+        with self._lock:
+            return [request for request in self.requests if request.path == path]
+
     def queue(self, *contents: Optional[str]) -> None:
         for content in contents:
             self.queue_completion(content)
@@ -88,6 +175,9 @@ class FakeOpenAIServer:
         self, content: Optional[str], *, finish_reason: str = "stop", refusal: Optional[str] = None, times: int = 1
     ) -> None:
         self.queue_reply(200, _completion_body(content, finish_reason, refusal), times=times)
+
+    def queue_transcription(self, text: str, *, times: int = 1) -> None:
+        self.queue_reply(200, {"text": text}, times=times)
 
     def queue_error(
         self,
@@ -117,8 +207,12 @@ class FakeOpenAIServer:
             def do_POST(self) -> None:
                 length = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(length) if length else b""
+                content_type = self.headers.get("Content-Type") or ""
                 try:
-                    body: Any = json.loads(raw or b"{}")
+                    if content_type.startswith("multipart/"):
+                        body: Any = parse_multipart(content_type, raw)
+                    else:
+                        body = json.loads(raw or b"{}")
                 except ValueError:
                     body = {"_unparsed": raw.decode("utf-8", "replace")}
                 headers = {name.lower(): value for name, value in self.headers.items()}
@@ -161,7 +255,7 @@ class FakeOpenAIServer:
     def _answer(self, request: RecordedRequest) -> _Reply:
         with self._lock:
             self.requests.append(request)
-            if request.path != CHAT_PATH:
+            if request.path not in (CHAT_PATH, TRANSCRIPTIONS_PATH):
                 return _Reply(404, error_body(f"unknown route {request.path}", "not_found", "not_found_error"))
             if request.format_type in self.reject_types:
                 message = f"response_format {request.format_type} is not supported"

@@ -1,12 +1,17 @@
 # preview beta V0.1 tested done formating done
-import os
+from __future__ import annotations
+
+import asyncio
 import io
-import wave
-import tempfile
-import threading
 import sys
-from typing import Optional, Callable
+import threading
+import wave
+from dataclasses import replace
+from typing import Any, Awaitable, Callable, Optional, Union
+
 from dotenv import load_dotenv
+
+from babas import ui
 
 load_dotenv()
 
@@ -17,12 +22,6 @@ try:
 except ImportError:
     SOUNDDEVICE_AVAILABLE = False
     print("sounddevice not installed. Run: pip install sounddevice numpy")
-
-try:
-    from openai import OpenAI
-    OPENAI_AVAILABLE = True
-except ImportError:
-    OPENAI_AVAILABLE = False
 
 try:
     import keyboard
@@ -36,6 +35,17 @@ SILENCE_THRESHOLD = 0.01
 SILENCE_DURATION = 1.5
 MAX_DURATION = 30
 MIN_DURATION = 0.5
+TRANSCRIBE_TIMEOUT_S = 120
+WAV_MIME = "audio/wav"
+SOFT_ERROR_CODES = ("empty", "bad_audio")
+
+_default_settings: Any = None
+
+
+def configure(settings: Any) -> None:
+    global _default_settings
+    _default_settings = settings
+
 
 class AudioRecorder:
     def __init__(self):
@@ -231,47 +241,141 @@ class AudioRecorder:
         buffer.seek(0)
         return buffer.read()
 
+class _AsyncRunner:
+    def __init__(self) -> None:
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _serve(loop: asyncio.AbstractEventLoop) -> None:
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+
+    def _ensure(self) -> asyncio.AbstractEventLoop:
+        with self._lock:
+            if self._loop is None:
+                loop = asyncio.new_event_loop()
+                thread = threading.Thread(target=self._serve, args=(loop,), name="babas-stt", daemon=True)
+                thread.start()
+                self._loop, self._thread = loop, thread
+            return self._loop
+
+    def run(self, coro: Awaitable[Any], timeout: float) -> Any:
+        future = asyncio.run_coroutine_threadsafe(coro, self._ensure())  # type: ignore[arg-type]
+        try:
+            return future.result(timeout)
+        except BaseException:
+            future.cancel()
+            raise
+
+    def close(self) -> None:
+        with self._lock:
+            loop, thread = self._loop, self._thread
+            self._loop = self._thread = None
+        if loop is None or thread is None:
+            return
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+        if not thread.is_alive():
+            loop.close()
+
+
+def _failure_text(exc: BaseException) -> str:
+    code = getattr(exc, "code", None)
+    message = getattr(exc, "message", None)
+    if isinstance(code, str) and isinstance(message, str) and message:
+        return message
+    if isinstance(exc, ImportError):
+        return "The speech-to-text module (babas.stt) is not available."
+    if isinstance(exc, ValueError):
+        return f"Invalid configuration: {exc}"
+    if isinstance(exc, TimeoutError) or type(exc).__name__ == "TimeoutError":
+        return "The speech service took too long to answer. Try again."
+    return f"Transcription error: {exc}"
+
+
 class VoiceTranscriber:
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.client = None
-        self.model = "whisper-1"
-        if self.api_key and OPENAI_AVAILABLE:
-            self.client = OpenAI(api_key=self.api_key)
+    def __init__(self, api_key: Optional[str] = None, settings: Any = None, stt: Any = None):
+        self._api_key = api_key
+        self._settings = settings
+        self._resolved: Any = None
+        self._stt = stt
+        self._runner = _AsyncRunner()
+        self.timeout = TRANSCRIBE_TIMEOUT_S
+        self.last_error: Optional[str] = None
+
+    def _load_settings(self) -> Any:
+        if self._resolved is None:
+            base = self._settings
+            if base is None:
+                from babas.config import Settings
+
+                base = _default_settings if _default_settings is not None else Settings.from_env()
+            self._resolved = replace(base, stt_api_key=self._api_key) if self._api_key else base
+        return self._resolved
+
+    def _backend(self) -> Any:
+        if self._stt is None:
+            from babas.stt import make_stt
+
+            self._stt = make_stt(self._load_settings())
+        return self._stt
 
     def is_available(self) -> bool:
-        return self.client is not None and SOUNDDEVICE_AVAILABLE
-
-    def transcribe(self, audio: np.ndarray, language: str = "en") -> Optional[str]:
-        if not self.client:
-            return None
+        if not SOUNDDEVICE_AVAILABLE:
+            return False
+        if self._stt is not None:
+            return True
         try:
-            recorder = AudioRecorder()
-            wav_bytes = recorder.audio_to_wav_bytes(audio)
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                f.write(wav_bytes)
-                temp_path = f.name
-            with open(temp_path, "rb") as audio_file:
-                response = self.client.audio.transcriptions.create(
-                    model=self.model,
-                    file=audio_file,
-                    language=language,
-                    response_format="text"
-                )
-            os.unlink(temp_path)
-            return response.strip() if response else None
-        except Exception as e:
-            print(f"Transcription error: {e}")
+            import babas.stt  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
+    def _wav(self, audio: Union[bytes, "np.ndarray"]) -> bytes:
+        if isinstance(audio, (bytes, bytearray)):
+            return bytes(audio)
+        return AudioRecorder().audio_to_wav_bytes(audio)
+
+    def _report(self, exc: BaseException) -> None:
+        self.last_error = _failure_text(exc)
+        term = ui.detect(sys.stdout)
+        if getattr(exc, "code", None) in SOFT_ERROR_CODES:
+            ui.emit(ui.card(term, "Dictado por voz", [self.last_error], kind="warn"))
+        else:
+            ui.emit(ui.error_panel(term, self.last_error, title="Dictado por voz"))
+
+    def transcribe(self, audio: Union[bytes, "np.ndarray"], language: Optional[str] = None) -> Optional[str]:
+        self.last_error = None
+        try:
+            wav = self._wav(audio)
+            language = language or self._load_settings().language
+            text = self._runner.run(self._backend().transcribe(wav, WAV_MIME, language), self.timeout)
+        except Exception as exc:
+            self._report(exc)
             return None
+        text = (text or "").strip()
+        return text or None
+
+    def close(self) -> None:
+        backend, self._stt = self._stt, None
+        closer = getattr(backend, "close", None)
+        if closer is not None:
+            try:
+                self._runner.run(closer(), 5)
+            except Exception:
+                pass
+        self._runner.close()
 
 class VoiceListener:
     MODE_AUTO = "auto"
     MODE_PUSH_TO_TALK = "ptt"
     MODE_ENTER = "enter"
 
-    def __init__(self):
+    def __init__(self, settings: Any = None):
         self.recorder = AudioRecorder()
-        self.transcriber = VoiceTranscriber()
+        self.transcriber = VoiceTranscriber(settings=settings)
         self.enabled = self.transcriber.is_available()
         self.listening = False
         self.mode = self.MODE_ENTER
@@ -300,14 +404,17 @@ class VoiceListener:
             audio = self.recorder.record_until_silence(on_sound=lambda: print("   Detected..."))
         if audio is None:
             return None
+        return self._transcribe(audio)
+
+    def _transcribe(self, audio: Any) -> Optional[str]:
         print("   Transcribing...")
         text = self.transcriber.transcribe(audio)
         if text:
             print(f"   \"{text}\"")
             return text
-        else:
+        if not self.transcriber.last_error:
             print("   Could not transcribe")
-            return None
+        return None
 
     def listen_push_to_talk(self, key: str = "space") -> Optional[str]:
         if not self.enabled:
@@ -315,11 +422,7 @@ class VoiceListener:
         audio = self.recorder.record_push_to_talk(key)
         if audio is None:
             return None
-        print("   Transcribing...")
-        text = self.transcriber.transcribe(audio)
-        if text:
-            print(f"   \"{text}\"")
-        return text
+        return self._transcribe(audio)
 
     def listen_with_enter(self) -> Optional[str]:
         if not self.enabled:
@@ -327,15 +430,11 @@ class VoiceListener:
         audio = self.recorder.record_with_enter()
         if audio is None:
             return None
-        print("   Transcribing...")
-        text = self.transcriber.transcribe(audio)
-        if text:
-            print(f"   \"{text}\"")
-        return text
+        return self._transcribe(audio)
 
 class VoiceInputMode:
-    def __init__(self):
-        self.listener = VoiceListener()
+    def __init__(self, settings: Any = None):
+        self.listener = VoiceListener(settings)
         self.enabled = self.listener.is_available()
         self.active = False
         self.ptt_available = KEYBOARD_AVAILABLE
@@ -424,14 +523,8 @@ class VoiceInputMode:
             if audio is None:
                 print("   No audio recorded")
                 return "", False
-            print("   Transcribing...")
-            text = self.listener.transcriber.transcribe(audio)
-            if text:
-                print(f"   \"{text}\"")
-                return text, True
-            else:
-                print("   Could not transcribe")
-                return "", False
+            text = self.listener._transcribe(audio)
+            return (text, True) if text else ("", False)
         elif key == "t":
             print("Type your command:")
             text = input(">>> ").strip()
@@ -462,7 +555,7 @@ if __name__ == "__main__":
         print("\nVoice input not available.")
         print("   Make sure you have:")
         print("   1. pip install sounddevice numpy keyboard")
-        print("   2. OPENAI_API_KEY in your .env")
+        print("   2. a speech backend in your .env (BABAS_STT_* variables, or OPENAI_API_KEY; see docs/providers.md)")
         print("   3. A microphone connected")
     else:
         print("\nVoice system ready!")

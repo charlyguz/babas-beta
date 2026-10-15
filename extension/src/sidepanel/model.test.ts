@@ -5,11 +5,16 @@ import {
   activeRequest,
   canSend,
   initialState,
+  micDisabled,
+  micLabelKey,
   reduce,
   runStateKey,
+  showPermissionButton,
   showResume,
   showStop,
   statusKey,
+  voiceErrorKey,
+  voiceStatusKey,
   type PanelAction,
   type PanelState,
 } from './model';
@@ -171,5 +176,133 @@ describe('log and settings', () => {
     const s = run([sw({ type: 'settings', bridgePort: 8765, sites: ['youtube.com'] })]);
     expect(s.bridgePort).toBe(8765);
     expect(s.sites).toEqual(['youtube.com']);
+  });
+});
+
+describe('voice input', () => {
+  const recording = (): PanelState => run([{ type: 'voice.starting' }, { type: 'voice.recording' }], online());
+  const transcribing = (id = 'v1'): PanelState => run([{ type: 'voice.transcribing', request_id: id }], recording());
+  const result = (id: string, text: string): PanelAction => sw({ type: 'voice.result', request_id: id, text });
+  const failure = (id: string, code: 'busy' | 'timeout' | 'provider'): PanelAction => sw({ type: 'voice.error', request_id: id, code, message: 'x' });
+
+  it('starts idle with no error', () => {
+    const s = initialState();
+    expect(s.voice).toBe('idle');
+    expect(s.voiceError).toBeNull();
+    expect(s.voiceRequestId).toBeNull();
+  });
+
+  it('walks idle, starting, recording, transcribing and back to idle on a transcript', () => {
+    let s = online();
+    s = run([{ type: 'voice.starting' }], s);
+    expect(s.voice).toBe('starting');
+    s = run([{ type: 'voice.recording' }], s);
+    expect(s.voice).toBe('recording');
+    s = run([{ type: 'voice.transcribing', request_id: 'v1' }], s);
+    expect(s).toMatchObject({ voice: 'transcribing', voiceRequestId: 'v1' });
+    s = run([result('v1', 'busque recetas')], s);
+    expect(s).toMatchObject({ voice: 'idle', voiceError: null, voiceRequestId: null });
+  });
+
+  it('only moves forward in order', () => {
+    const idle = online();
+    expect(run([{ type: 'voice.recording' }], idle).voice).toBe('idle');
+    expect(run([{ type: 'voice.transcribing', request_id: 'v1' }], idle).voice).toBe('idle');
+    const starting = run([{ type: 'voice.starting' }], idle);
+    expect(run([{ type: 'voice.transcribing', request_id: 'v1' }], starting).voice).toBe('starting');
+    const rec = recording();
+    expect(run([{ type: 'voice.recording' }], rec)).toBe(rec);
+  });
+
+  it('a failure stores the code, returns to idle and is cleared by the next attempt', () => {
+    let s = run([{ type: 'voice.failed', code: 'permission' }], online());
+    expect(s).toMatchObject({ voice: 'idle', voiceError: 'permission', voiceRequestId: null });
+    s = run([{ type: 'voice.starting' }], s);
+    expect(s).toMatchObject({ voice: 'starting', voiceError: null });
+  });
+
+  it('shows the transcript only for the current request', () => {
+    const s = transcribing('v1');
+    expect(run([result('other', 'hola')], s)).toBe(s);
+    expect(run([result('v1', 'hola')], online())).toMatchObject({ voice: 'idle' });
+    expect(run([failure('other', 'busy')], s)).toBe(s);
+  });
+
+  it('turns a blank transcript into the empty error', () => {
+    for (const text of ['', '   ', '\n\t']) {
+      expect(run([result('v1', text)], transcribing())).toMatchObject({ voice: 'idle', voiceError: 'empty' });
+    }
+  });
+
+  it('keeps the error code of a voice.error for the current request', () => {
+    for (const code of ['busy', 'timeout', 'provider'] as const) {
+      expect(run([failure('v1', code)], transcribing())).toMatchObject({ voice: 'idle', voiceError: code, voiceRequestId: null });
+    }
+  });
+
+  it('ignores answers when nothing is being transcribed', () => {
+    const s = online();
+    expect(run([result('v1', 'hola')], s)).toBe(s);
+    expect(run([failure('v1', 'busy')], s)).toBe(s);
+    const rec = recording();
+    expect(run([result('v1', 'hola')], rec)).toBe(rec);
+  });
+
+  it('loses the recording and the pending request when the port drops', () => {
+    for (const s of [run([{ type: 'voice.starting' }], online()), recording(), transcribing()]) {
+      expect(run([{ type: 'port', up: false }], s)).toMatchObject({ voice: 'idle', voiceError: 'no_connection', voiceRequestId: null, portUp: false });
+    }
+    const idle = run([{ type: 'voice.failed', code: 'empty' }], online());
+    expect(run([{ type: 'port', up: false }], idle).voiceError).toBe('empty');
+  });
+
+  it('ends a recording when the bridge drops, but waits for the worker while transcribing', () => {
+    expect(run([status(false, false, false)], recording())).toMatchObject({ voice: 'idle', voiceError: 'no_connection' });
+    expect(run([status(false, false, false)], run([{ type: 'voice.starting' }], online()))).toMatchObject({ voice: 'idle', voiceError: 'no_connection' });
+    expect(run([status(false, false, false)], transcribing())).toMatchObject({ voice: 'transcribing', voiceRequestId: 'v1' });
+    expect(run([status(true, false, true)], recording()).voice).toBe('recording');
+  });
+
+  it('sending a task resets the voice state so a late transcript cannot appear', () => {
+    const s = run([{ type: 'user.sent', text: 'hola', ts: 1 }], transcribing());
+    expect(s).toMatchObject({ voice: 'idle', voiceError: null, voiceRequestId: null });
+    expect(run([result('v1', 'tarde')], s)).toBe(s);
+  });
+
+  it('Stop is unrelated to voice', () => {
+    for (const s of [recording(), transcribing()]) {
+      const after = run([{ type: 'user.stopped' }], s);
+      expect(after.voice).toBe(s.voice);
+      expect(after.voiceRequestId).toBe(s.voiceRequestId);
+    }
+  });
+
+  it('the microphone button is disabled while disconnected, starting or transcribing', () => {
+    expect(micDisabled(initialState())).toBe(true);
+    expect(micDisabled(online())).toBe(false);
+    expect(micDisabled(run([{ type: 'voice.starting' }], online()))).toBe(true);
+    expect(micDisabled(recording())).toBe(false);
+    expect(micDisabled(transcribing())).toBe(true);
+    expect(micDisabled(run([sw({ type: 'run_state', state: 'running' })], online()))).toBe(false);
+  });
+
+  it('labels the button and the status text for each phase', () => {
+    expect(micLabelKey(online())).toBe('voiceStart');
+    expect(micLabelKey(recording())).toBe('voiceFinish');
+    expect(micLabelKey(transcribing())).toBe('voiceStart');
+    expect(voiceStatusKey(online())).toBeNull();
+    expect(voiceStatusKey(run([{ type: 'voice.starting' }], online()))).toBe('voiceStarting');
+    expect(voiceStatusKey(recording())).toBe('voiceListening');
+    expect(voiceStatusKey(transcribing())).toBe('voiceTranscribing');
+  });
+
+  it('maps every failure to a locale key and offers the permission button only for permission errors', () => {
+    const codes = ['no_connection', 'timeout', 'busy', 'not_configured', 'provider', 'bad_audio', 'empty', 'permission', 'no_device', 'mic_busy', 'capture'] as const;
+    const keys = codes.map(voiceErrorKey);
+    expect(new Set(keys).size).toBe(codes.length);
+    expect(keys.every((key) => /^voiceErr[A-Z]/.test(key))).toBe(true);
+    expect(showPermissionButton(run([{ type: 'voice.failed', code: 'permission' }], online()))).toBe(true);
+    expect(showPermissionButton(run([{ type: 'voice.failed', code: 'empty' }], online()))).toBe(false);
+    expect(showPermissionButton(run([{ type: 'voice.failed', code: 'permission' }, { type: 'voice.starting' }], online()))).toBe(false);
   });
 });

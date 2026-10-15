@@ -120,6 +120,7 @@ function applyAnswer(message: PanelToSw): void {
 
 export interface PanelHooks {
   onMessage: (message: PanelToSw, port: chrome.runtime.Port) => void;
+  onDisconnect?: (port: chrome.runtime.Port) => void;
   greeting: () => Promise<SwToPanel[]>;
 }
 
@@ -136,6 +137,7 @@ export function initPanels(hooks: PanelHooks): void {
     port.onDisconnect.addListener(() => {
       ports.delete(port);
       refreshBadge();
+      hooks.onDisconnect?.(port);
     });
     port.onMessage.addListener((raw: unknown) => {
       if (!isPanelMessage(raw)) return;

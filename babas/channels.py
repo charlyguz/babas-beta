@@ -1,9 +1,11 @@
 import asyncio
 import logging
+import sys
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol
 
+from babas import ui
 from babas.drivers.base import DriverError, ErrorCode
 from babas.safety import redact, title_es
 
@@ -69,7 +71,7 @@ async def _read_line(prompt: str) -> str:
         line: Optional[str] = None
         error: Optional[Exception] = None
         try:
-            line = input(prompt)
+            line = input(ui.for_input(prompt))
         except Exception as exc:
             error = exc
         try:
@@ -82,17 +84,28 @@ async def _read_line(prompt: str) -> str:
 
 
 def _say(text: str = "") -> None:
-    print(text, flush=True)
+    ui.emit(text)
 
 
 class ConsoleChannel:
-    def __init__(self, voice_gui: Any = None, ainput: Optional[Callable[[str], Awaitable[str]]] = None):
+    def __init__(
+        self,
+        voice_gui: Any = None,
+        ainput: Optional[Callable[[str], Awaitable[str]]] = None,
+        term: Optional[ui.Term] = None,
+    ):
         self.voice_gui = voice_gui
         self._ainput = ainput or _read_line
+        self._term = term
+
+    @property
+    def term(self) -> ui.Term:
+        return self._term if self._term is not None else ui.detect(sys.stdout)
 
     async def _prompt(self, prompt: str) -> Optional[str]:
         try:
-            return await self._ainput(prompt)
+            with ui.suspended():
+                return await self._ainput(prompt)
         except Exception as exc:
             log.debug("console input ended: %s", type(exc).__name__)
             return None
@@ -111,13 +124,14 @@ class ConsoleChannel:
             text = "\n".join([title_es(req.reasons), *req.lines] + ([f"BABAS dice: {explanation}"] if explanation else []))
             approved = await self._voice_yes(text)
             return ConfirmResult(True) if approved else ConfirmResult(False, None, "denied")
-        _say()
-        _say(f"== {title_es(req.reasons)} ==")
-        for line in req.lines:
-            _say(f"  - {line}")
+        term = self.term
+        bullet = term.glyph("bullet")
+        body: List[str] = [f"{bullet} {line}" for line in req.lines]
         if explanation:
-            _say(f"  BABAS dice: {explanation}")
-        answer = await self._prompt("Continue? (y/N): ")
+            body.extend(["", f"BABAS dice: {explanation}"] if body else [f"BABAS dice: {explanation}"])
+        _say()
+        _say(ui.card(term, title_es(req.reasons), body, kind="confirm"))
+        answer = await self._prompt(ui.question(term, "Continue? (y/N): "))
         if answer is None:
             return ConfirmResult(False, None, "no_ui")
         if answer.strip().lower() in _YES:
@@ -125,9 +139,12 @@ class ConsoleChannel:
         return ConfirmResult(False, None, "denied")
 
     async def ask(self, question: str, kind: str = "text") -> Optional[str]:
-        _say(redact(question))
+        term = self.term
         handoff = kind == "handoff"
-        answer = await self._prompt("Press Enter when you are done… " if handoff else "> ")
+        _say()
+        _say(ui.card(term, "Necesito su ayuda" if handoff else "BABAS pregunta", [redact(question)], kind="handoff" if handoff else "question"))
+        prompt = ui.question(term, f"Press Enter when you are done{term.glyph('ellipsis')} ") if handoff else ui.prompt(term)
+        answer = await self._prompt(prompt)
         if answer is None:
             return None
         if handoff:
@@ -137,22 +154,27 @@ class ConsoleChannel:
     async def allow_site(self, host: str, url: str) -> bool:
         if self.voice_gui is not None:
             return await self._voice_yes(redact(f"BABAS quiere usar el sitio {host}. ¿Permitir?"))
-        answer = await self._prompt(redact(f"Allow BABAS to use {host}? (y/N): "))
+        term = self.term
+        _say()
+        _say(ui.card(term, "Permiso para un sitio", [redact(f"BABAS quiere usar el sitio {host}.")], kind="warn"))
+        answer = await self._prompt(ui.question(term, redact(f"Allow BABAS to use {host}? (y/N): ")))
         return answer is not None and answer.strip().lower() in _YES
 
     async def log(self, kind: str, text: str, ok: Optional[bool] = None) -> None:
         safe = redact(text)
+        term = self.term
         if kind == "assistant":
-            _say(f"BABAS: {safe}")
+            _say(ui.speech(term, safe))
         elif kind == "step":
-            marker = "[ok]" if ok is True else "[failed]" if ok is False else "-"
-            _say(f"  {marker} {safe}")
+            _say(ui.step(term, "success" if ok is True else "failure" if ok is False else "info", safe))
         elif kind == "result":
-            _say(f"\n=> {safe}")
+            _say()
+            _say(ui.answer_panel(term, safe))
         elif kind == "error":
-            _say(f"Error: {safe}")
+            _say()
+            _say(ui.error_panel(term, safe))
         else:
-            _say(safe)
+            _say(ui.step(term, "info", safe))
 
     async def run_state(self, state: str, summary: str = "") -> None:
         log.debug("run state: %s", state)

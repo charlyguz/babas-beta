@@ -161,5 +161,83 @@
         "content": "$3"
       }
     }
+  },
+  "voiceStart": {
+    "message": "Speak"
+  },
+  "voiceFinish": {
+    "message": "Done"
+  },
+  "voiceStarting": {
+    "message": "Getting the microphone ready…"
+  },
+  "voiceListening": {
+    "message": "I'm listening…"
+  },
+  "voiceListeningHint": {
+    "message": "When you finish speaking, press “Done”."
+  },
+  "voiceTranscribing": {
+    "message": "Writing down what you said…"
+  },
+  "voiceGrantPermission": {
+    "message": "Give permission"
+  },
+  "voiceErrNoConnection": {
+    "message": "There is no connection with BABAS, so I could not write down what you said. Check that the app is open and try again."
+  },
+  "voiceErrTimeout": {
+    "message": "It took too long to write down what you said. Please try again."
+  },
+  "voiceErrBusy": {
+    "message": "I am still writing down your previous recording. Wait a moment and try again."
+  },
+  "voiceErrNotConfigured": {
+    "message": "Voice typing is not ready yet. For now you can type with the keyboard."
+  },
+  "voiceErrProvider": {
+    "message": "I could not write down what you said. Try again in a moment or type with the keyboard."
+  },
+  "voiceErrBadAudio": {
+    "message": "The recording did not sound right. Please try again."
+  },
+  "voiceErrEmpty": {
+    "message": "I could not hear anything. Move closer to the microphone, press “Speak” and talk calmly."
+  },
+  "voiceErrPermission": {
+    "message": "BABAS needs your permission to use the microphone. Press “Give permission”, choose “Allow”, then come back here and press “Speak”."
+  },
+  "voiceErrNoDevice": {
+    "message": "I could not find a microphone. Check that it is connected and try again."
+  },
+  "voiceErrMicBusy": {
+    "message": "I could not use the microphone. Another app may be using it. Close it and try again."
+  },
+  "voiceErrCapture": {
+    "message": "I could not record your voice. Please try again."
+  },
+  "micPermTitle": {
+    "message": "Microphone permission"
+  },
+  "micPermIntro": {
+    "message": "To write down what you say, BABAS needs to use your computer's microphone. BABAS only uses it when you press “Speak”."
+  },
+  "micPermButton": {
+    "message": "Allow the microphone"
+  },
+  "micPermWaiting": {
+    "message": "Choose “Allow” in the window that appeared near the address bar."
+  },
+  "micPermDone": {
+    "message": "Done. You can now close this tab and go back to BABAS."
+  },
+  "micPermDenied": {
+    "message": "Permission was not given. To allow it, click the icon to the left of this page's address (at the top), open “Site settings” and change “Microphone” to “Allow”. Then press the button again."
+  },
+  "micPermNoDevice": {
+    "message": "I could not find a microphone. Check that it is connected and try again."
+  },
+  "micPermError": {
+    "message": "I could not use the microphone. Please try again."
   }
 }

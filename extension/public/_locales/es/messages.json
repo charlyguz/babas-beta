@@ -161,5 +161,83 @@
         "content": "$3"
       }
     }
+  },
+  "voiceStart": {
+    "message": "Hablar"
+  },
+  "voiceFinish": {
+    "message": "Listo"
+  },
+  "voiceStarting": {
+    "message": "Preparando el micrófono…"
+  },
+  "voiceListening": {
+    "message": "Estoy escuchando…"
+  },
+  "voiceListeningHint": {
+    "message": "Cuando termine de hablar, presione «Listo»."
+  },
+  "voiceTranscribing": {
+    "message": "Escribiendo lo que dijo…"
+  },
+  "voiceGrantPermission": {
+    "message": "Dar permiso"
+  },
+  "voiceErrNoConnection": {
+    "message": "No hay conexión con BABAS, por eso no pude escribir lo que dijo. Revise que la aplicación esté abierta e intente de nuevo."
+  },
+  "voiceErrTimeout": {
+    "message": "Tardé demasiado en escribir lo que dijo. Intente de nuevo."
+  },
+  "voiceErrBusy": {
+    "message": "Todavía estoy escribiendo su grabación anterior. Espere un momento e intente de nuevo."
+  },
+  "voiceErrNotConfigured": {
+    "message": "La escritura por voz todavía no está lista. Por ahora puede escribir con el teclado."
+  },
+  "voiceErrProvider": {
+    "message": "No pude escribir lo que dijo. Intente de nuevo en un momento o escriba con el teclado."
+  },
+  "voiceErrBadAudio": {
+    "message": "La grabación no se escuchó bien. Intente de nuevo."
+  },
+  "voiceErrEmpty": {
+    "message": "No alcancé a escuchar nada. Acérquese al micrófono, presione «Hablar» y hable con calma."
+  },
+  "voiceErrPermission": {
+    "message": "BABAS necesita su permiso para usar el micrófono. Presione «Dar permiso», elija «Permitir» y luego regrese aquí y presione «Hablar»."
+  },
+  "voiceErrNoDevice": {
+    "message": "No encontré un micrófono. Revise que esté conectado e intente de nuevo."
+  },
+  "voiceErrMicBusy": {
+    "message": "No pude usar el micrófono. Quizás otra aplicación lo está usando. Ciérrela e intente de nuevo."
+  },
+  "voiceErrCapture": {
+    "message": "No pude grabar su voz. Intente de nuevo."
+  },
+  "micPermTitle": {
+    "message": "Permiso del micrófono"
+  },
+  "micPermIntro": {
+    "message": "Para escribir lo que usted diga, BABAS necesita usar el micrófono de su computadora. BABAS solo lo usa cuando usted presiona «Hablar»."
+  },
+  "micPermButton": {
+    "message": "Permitir el micrófono"
+  },
+  "micPermWaiting": {
+    "message": "Elija «Permitir» en la ventana que apareció cerca de la barra de direcciones."
+  },
+  "micPermDone": {
+    "message": "Listo. Ya puede cerrar esta pestaña y volver a BABAS."
+  },
+  "micPermDenied": {
+    "message": "No se dio el permiso. Para permitirlo, haga clic en el icono que está a la izquierda de la dirección de esta página (arriba), abra «Configuración del sitio» y cambie «Micrófono» a «Permitir». Después presione de nuevo el botón."
+  },
+  "micPermNoDevice": {
+    "message": "No encontré un micrófono. Revise que esté conectado e intente de nuevo."
+  },
+  "micPermError": {
+    "message": "No pude usar el micrófono. Intente de nuevo."
   }
 }

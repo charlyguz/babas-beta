@@ -1,16 +1,18 @@
 import asyncio
+import logging
 import os
 import random
 import shutil
 import signal
 import sys
 import threading
+import time
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from playwright.async_api import Page, Playwright, async_playwright
 
-from babas import voice
+from babas import __version__, ui, voice
 from babas.agent import Agent, RunResult
 from babas.channels import ConsoleChannel
 from babas.config import Settings
@@ -26,6 +28,8 @@ from babas.gate import SafeDriver
 from babas.llm import make_llm
 from babas.logs import setup_logging
 from babas.safety import SafetyPolicy, redact
+
+log = logging.getLogger("babas.cli")
 
 HACKER_PHRASES = [
     "Accessing mainframe...",
@@ -51,6 +55,34 @@ _input_pending = threading.Event()
 _pending_read: Optional["asyncio.Future[str]"] = None
 
 STOP_POLL_S = 0.3
+
+HELP_COMMANDS = [
+    ("exit, quit, q", "Close program"),
+    ("help, ?", "Show this help"),
+    ("tabs", "Show open tabs"),
+    ("new", "Open new tab"),
+    ("screenshot, ss", "Take screenshot"),
+    ("mute, shh", "Mute butler"),
+]
+
+HELP_EXAMPLES = [
+    "open youtube and search lofi music",
+    "go to gmail",
+    "in new tab open twitter",
+    "search two sum on leetcode",
+]
+
+
+def _term() -> ui.Term:
+    return ui.detect(sys.stdout)
+
+
+def _line(status: str, text: str, **kwargs: Any) -> None:
+    ui.emit(ui.step(_term(), status, text, **kwargs))
+
+
+def _option(term: ui.Term, key: str, text: str) -> str:
+    return f"    {term.paint(key, 'bold', 'bright_cyan')} {text}"
 
 
 def preflight_problem(settings: Settings) -> Optional[str]:
@@ -79,7 +111,7 @@ def _start_read(prompt: str) -> "asyncio.Future[str]":
         line: Optional[str] = None
         error: Optional[Exception] = None
         try:
-            line = input(prompt)
+            line = input(ui.for_input(prompt))
         except Exception as e:
             error = e
         finally:
@@ -125,9 +157,15 @@ def _exit_if_input_pending() -> None:
 
 
 async def run_hacker_mode(page: Page, butler: Any = None) -> None:
-    print("\n" + "="*60)
-    print("INITIATING INTRUSION PROTOCOL...")
-    print("="*60)
+    term = _term()
+
+    def say(text: str = "") -> None:
+        ui.emit(term.paint(text, "green"))
+
+    say()
+    say("=" * 60)
+    say("INITIATING INTRUSION PROTOCOL...")
+    say("=" * 60)
     if butler and butler.enabled:
         butler.say("Initiating intrusion protocol sir. Accessing the mainframe.")
     try:
@@ -139,61 +177,62 @@ async def run_hacker_mode(page: Page, butler: Any = None) -> None:
             await asyncio.sleep(0.3)
         except Exception:
             pass
-        print("\nHACKING...")
+        say()
+        say("HACKING...")
         for i in range(random.randint(150, 250)):
             key = random.choice("asdfghjklqwertyuiopzxcvbnm1234567890")
             await page.keyboard.press(key)
             delay = random.uniform(0.01, 0.05)
             await asyncio.sleep(delay)
-            if i == 30:
-                print(f"   {random.choice(HACKER_PHRASES)}")
-            elif i == 70:
-                print(f"   {random.choice(HACKER_PHRASES)}")
-            elif i == 120:
-                print(f"   {random.choice(HACKER_PHRASES)}")
-            elif i == 180:
-                print(f"   {random.choice(HACKER_PHRASES)}")
+            if i in (30, 70, 120, 180):
+                say(f"   {random.choice(HACKER_PHRASES)}")
         await asyncio.sleep(0.5)
-        print("\n" + "="*60)
+        say()
+        say("=" * 60)
         success_phrase = random.choice(HACKER_SUCCESS_PHRASES)
-        print(f"   {success_phrase}")
-        print("="*60 + "\n")
+        say(f"   {success_phrase}")
+        say("=" * 60)
+        say()
         if butler and butler.enabled:
             butler.say(success_phrase)
         await asyncio.sleep(2)
     except Exception as e:
-        print(f"   Error in hacker mode: {redact(str(e))}")
+        say(f"   Error in hacker mode: {redact(str(e))}")
         if butler and butler.enabled:
             butler.say("We've been detected sir. Aborting mission.")
 
 
 async def select_session_mode(playwright: Playwright) -> Tuple[str, dict, Any]:
-    print("\nBROWSER CONFIGURATION")
-    print("="*50)
+    term = _term()
+    ui.emit()
+    ui.emit(ui.rule(term, "Browser"))
     available = get_available_browsers()
     preferred = get_preferred_browser()
-    print(f"\nAvailable: {', '.join(b.capitalize() for b in available) if available else 'none'}")
+    pairs = [("available", ", ".join(b.capitalize() for b in available) if available else "none")]
     if preferred:
-        print(f"   Default: {preferred.capitalize()}")
+        pairs.append(("default", preferred.capitalize()))
+    ui.emit(ui.info_row(term, pairs))
     port = scan_debug_ports()
     if port:
-        print(f"\nBrowser detected on port {port}")
+        _line("info", f"Browser detected on port {port}")
         try:
             browser = await playwright.chromium.connect_over_cdp(f"http://localhost:{port}")
             contexts = browser.contexts
             pages = contexts[0].pages if contexts else []
-            print(f"   Connected! {len(pages)} tabs")
+            _line("success", f"Connected! {len(pages)} tabs")
             return "connect", {"port": port}, browser
         except Exception as e:
-            print(f"   Error connecting: {redact(str(e))}")
-    print("\nWhich browser to use?\n")
+            _line("failure", f"Error connecting: {redact(str(e))}")
+    ui.emit()
+    ui.emit("  " + term.paint("Which browser to use?", "bold"))
     if preferred:
-        print(f"  [ENTER] {preferred.capitalize()} (recommended)")
+        ui.emit(_option(term, "[ENTER]", f"{preferred.capitalize()} (recommended)"))
     for i, name in enumerate(available, 1):
         if name != preferred:
-            print(f"  [{i}] {name.capitalize()}")
-    print(f"  [n] New temporary session")
-    choice = (await _ainput(f"\nOption [ENTER = {preferred.capitalize() if preferred else 'Chrome'}]: ")).strip().lower()
+            ui.emit(_option(term, f"[{i}]", name.capitalize()))
+    ui.emit(_option(term, "[n]", "New temporary session"))
+    ui.emit()
+    choice = (await _ainput(ui.question(term, f"Option [ENTER = {preferred.capitalize() if preferred else 'Chrome'}]: "))).strip().lower()
     if choice == "n":
         return "new", {}, None
     if choice == "" and preferred:
@@ -209,12 +248,12 @@ async def select_session_mode(playwright: Playwright) -> Tuple[str, dict, Any]:
         return "connect", {"port": port, "browser": browser_name}, browser
     for fallback in available:
         if fallback != browser_name:
-            print(f"\nTrying {fallback.capitalize()}...")
+            _line("running", f"Trying {fallback.capitalize()}...")
             success, browser, port = await try_launch_and_connect(playwright, fallback)
             if success:
                 return "connect", {"port": port, "browser": fallback}, browser
-    print("\nCould not connect to any browser.")
-    print("   Using Playwright's built-in browser...")
+    _line("failure", "Could not connect to any browser.")
+    _line("info", "Using Playwright's built-in browser...")
     return "saved", {}, None
 
 
@@ -250,14 +289,28 @@ async def _watch_stop(voice_gui: Any, task: "asyncio.Future[Any]") -> None:
             return
 
 
-def _make_printer(voice_gui: Any) -> Callable[[str, Dict[str, Any]], Awaitable[None]]:
+def _make_printer(voice_gui: Any, status: Optional[ui.Status] = None) -> Callable[[str, Dict[str, Any]], Awaitable[None]]:
+    progress = {"total": 0, "done": 0}
+
+    def relabel(text: str) -> None:
+        if status is not None:
+            status.label = text
+
     async def on_event(name: str, data: Dict[str, Any]) -> None:
+        if name == "step":
+            progress["done"] += 1
+            more = data.get("ok") is not False and progress["done"] < progress["total"]
+            relabel(f"Working on step {progress['done'] + 1}/{progress['total']}" if more else "Thinking")
+            return
         steps = data.get("steps")
         if name != "plan" or not isinstance(steps, list) or not steps:
             return
+        progress.update(total=len(steps), done=0)
+        relabel(f"Working on step 1/{len(steps)}")
+        term = _term()
         lines = [f"Step {number}/{len(steps)}: {redact(str(summary))}" for number, summary in enumerate(steps, 1)]
         for line in lines:
-            print(f"   {line}")
+            ui.emit(ui.step(term, "pending", line))
         if voice_gui is not None:
             voice_gui.show_message("Executing...\n(Press STOP to cancel)\n\n" + "\n".join(lines))
 
@@ -289,12 +342,14 @@ async def run_task(
     *,
     settings: Settings,
 ) -> Optional[RunResult]:
+    term = _term()
     problem = preflight_problem(settings)
     if problem:
-        print(problem)
+        ui.emit(ui.error_panel(term, problem.removeprefix("Error:").strip()))
         _gui_result(voice_gui, "Error", "#ff4757", problem)
         return None
     channel = ConsoleChannel(voice_gui, ainput=_ainput)
+    status = ui.Status(term, "Thinking", hint="Ctrl+C to stop")
     llm = make_llm(settings)
     agent = Agent(
         SafeDriver(driver, policy, channel),
@@ -303,7 +358,7 @@ async def run_task(
         language=settings.language,
         max_steps=settings.max_steps,
         max_retries=settings.max_retries,
-        on_event=_make_printer(voice_gui),
+        on_event=_make_printer(voice_gui, status),
     )
     if voice_gui is not None:
         voice_gui.set_status("Executing...", "#ff9f43")
@@ -312,9 +367,11 @@ async def run_task(
     if butler and butler.enabled:
         butler.executing()
     loop = asyncio.get_running_loop()
+    started = time.monotonic()
     task = asyncio.ensure_future(agent.run(text))
     watcher = asyncio.ensure_future(_watch_stop(voice_gui, task)) if voice_gui is not None else None
     handled, previous = _install_sigint(loop, task)
+    status.start()
     try:
         await asyncio.wait({task})
     except asyncio.CancelledError:
@@ -322,6 +379,7 @@ async def run_task(
         await asyncio.wait({task})
         raise
     finally:
+        await status.stop()
         if handled:
             _remove_sigint(loop, previous)
         if watcher is not None:
@@ -331,75 +389,95 @@ async def run_task(
             voice_gui.clear_stop()
         await _close_llm(llm)
     if task.cancelled():
-        print("\nStopped")
+        ui.emit()
+        _line("warn", "Stopped")
         _gui_result(voice_gui, "Stopped", "#ff9f43", "Stopped.")
         if butler and butler.enabled:
             butler.say("Understood sir. Stopping execution.")
         return None
     result = task.result()
     answer = redact(result.answer)
+    summary = f"{result.steps} step{'' if result.steps == 1 else 's'} in {time.monotonic() - started:.1f} s"
+    ui.emit()
     if result.status == "done":
-        print("\nDone!")
+        _line("success", "Done", detail=summary)
         _gui_result(voice_gui, "Complete", "#00ff88", answer or "Complete!")
         if butler and butler.enabled:
             butler.success()
     elif result.status == "stopped":
-        print("\nStopped")
+        _line("warn", "Stopped", detail=summary)
         _gui_result(voice_gui, "Stopped", "#ff9f43", answer or "Stopped.")
     elif result.status == "failed":
-        print("\nCould not complete the task")
+        _line("failure", "Could not complete the task", detail=summary)
         _gui_result(voice_gui, "Error", "#ff4757", answer or "Could not complete the task.")
         if butler and butler.enabled:
             butler.say("I'm very sorry sir. I couldn't complete this task despite my attempts. Ready for your next command.")
     else:
-        print("\nPartially completed")
+        _line("warn", "Partially completed", detail=summary)
         _gui_result(voice_gui, "Stopped", "#ff9f43", answer or "Step limit reached.")
     return result
 
 
+def render_help(term: ui.Term) -> str:
+    pointer = term.paint(term.glyph("pointer"), "dim")
+    parts = [
+        ui.rule(term, "Commands"),
+        ui.table(term, ["Command", "What it does"], HELP_COMMANDS, styles=[("bold", "bright_cyan"), ()]),
+        "",
+        ui.rule(term, "Examples"),
+    ]
+    parts.extend(f'  {pointer} "{example}"' for example in HELP_EXAMPLES)
+    return "\n".join(parts)
+
+
+def render_tabs(term: ui.Term, rows: List[List[str]]) -> str:
+    return ui.table(term, ["", "Tab", "Title"], rows, styles=[("bright_cyan",), ("bold",), ()])
+
+
 def show_help() -> None:
-    print("\nCOMMANDS:")
-    print("   exit, quit, q    -> Close program")
-    print("   help, ?          -> Show this help")
-    print("   tabs             -> Show open tabs")
-    print("   new              -> Open new tab")
-    print("   screenshot, ss   -> Take screenshot")
-    print("   mute, shh        -> Mute butler")
-    print("\nEXAMPLES:")
-    print('   "open youtube and search lofi music"')
-    print('   "go to gmail"')
-    print('   "in new tab open twitter"')
-    print('   "search two sum on leetcode"')
+    ui.emit()
+    ui.emit(render_help(_term()))
+
+
+def _browser_label(mode: str, config: Dict[str, Any]) -> str:
+    if mode == "connect":
+        name = str(config.get("browser") or "your browser")
+        return f"{name} (port {config['port']})" if config.get("port") else name
+    return "built-in Chromium (saved profile)" if mode == "saved" else "built-in Chromium (temporary)"
+
+
+def _configure_voice(settings: Settings) -> None:
+    try:
+        import babas_listen
+
+        babas_listen.configure(settings)
+    except Exception as exc:
+        log.debug("voice input is not configured: %s", type(exc).__name__)
 
 
 async def amain(settings: Settings) -> None:
-    print("\n" + "="*60)
-    print("STARTING BABAS SYSTEM...")
-    print("="*60)
+    term = _term()
+    ui.emit()
+    ui.emit(ui.banner(term, [("model", settings.llm_model or "not set"), ("lang", settings.language), ("safety", "on")], version=__version__))
     butler = None
     if voice.voice_output_available():
         butler = voice.init_butler()
         if butler and butler.enabled:
-            print("Voice butler activated")
+            _line("success", "Voice butler activated")
             butler.say("Starting BABAS system sir.")
-    print("\nCapabilities:")
-    print("   - Smart web navigation")
-    print("   - AI auto-recovery")
-    print("   - Multiple tabs")
-    print("   - Voice commands")
-    print("\n" + "-"*40)
-    print("SELECT INPUT MODE:")
-    print("-"*40)
-    print("\n   [1] TEXT  - Type commands")
-    print("   [2] VOICE - Speak commands (opens window)")
+    ui.emit()
+    ui.emit(ui.rule(term, "Input mode"))
+    ui.emit(_option(term, "[1]", "TEXT   type commands"))
+    ui.emit(_option(term, "[2]", "VOICE  speak commands (opens a window)"))
     if butler and butler.enabled:
         butler.say("What mode do you prefer sir? Text or voice?")
     use_voice_mode = False
     voice_gui = None
     while True:
-        mode_choice = (await _ainput("\n>>> Option (1/2) [1]: ")).strip() or "1"
+        ui.emit()
+        mode_choice = (await _ainput(ui.question(term, "Option (1/2) [1]: "))).strip() or "1"
         if mode_choice == "1":
-            print("\nTEXT mode selected")
+            _line("success", "TEXT mode selected")
             if butler and butler.enabled:
                 butler.say("Text mode activated sir.")
             break
@@ -407,17 +485,17 @@ async def amain(settings: Settings) -> None:
             if voice.voice_gui_available():
                 use_voice_mode = True
                 voice_gui = voice.get_voice_gui()
-                print("\nVOICE mode selected")
-                print("   -> Control panel will open after connecting")
+                _configure_voice(settings)
+                _line("success", "VOICE mode selected", detail="the control panel opens after connecting")
                 if butler and butler.enabled:
                     butler.say("Voice mode activated sir. Opening control panel.")
                 break
             else:
-                print("   Voice GUI not available. Using text.")
-                print("   Install: pip install customtkinter sounddevice")
+                _line("warn", "Voice GUI not available. Using text.")
+                ui.emit(ui.muted(term, "    Install: pip install customtkinter sounddevice"))
                 break
         else:
-            print("   Please choose 1 or 2")
+            _line("warn", "Please choose 1 or 2")
     profile_path = None
     try:
         async with async_playwright() as p:
@@ -434,10 +512,10 @@ async def amain(settings: Settings) -> None:
             if context is None:
                 if mode == "saved":
                     profile_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "babas-profile")
-                    print(f"\nUsing saved BABAS session...")
+                    _line("info", "Using saved BABAS session...")
                 else:
                     profile_path = os.path.join(get_temp_debug_dir(), "temp-profile")
-                    print(f"\nTemporary session")
+                    _line("info", "Temporary session")
                 context = await p.chromium.launch_persistent_context(
                     user_data_dir=profile_path,
                     headless=False,
@@ -446,9 +524,9 @@ async def amain(settings: Settings) -> None:
                     no_viewport=True
                 )
             if is_connected:
-                print("\nCreating new tab for BABAS...")
+                _line("running", "Creating new tab for BABAS...")
                 initial_page = await context.new_page()
-                print(f"   Tab created (your other tabs won't be touched)")
+                _line("success", "Tab created", detail="your other tabs won't be touched")
             else:
                 if context.pages:
                     initial_page = context.pages[0]
@@ -457,11 +535,23 @@ async def amain(settings: Settings) -> None:
             driver = PlaywrightDriver(context, initial_page, attached=is_connected, browser=browser)
             await driver.start()
             policy = SafetyPolicy(settings.allowed_domains)
-            print("\n" + "="*60)
-            print("READY!")
-            print("="*60)
+            ui.emit()
+            ui.emit(ui.rule(term, "Ready"))
+            ui.emit(
+                ui.info_row(
+                    term,
+                    [
+                        ("mode", "voice" if use_voice_mode and voice_gui else "text"),
+                        ("browser", _browser_label(mode, config)),
+                        ("model", settings.llm_model or "not set"),
+                        ("lang", settings.language),
+                        ("safety", "on"),
+                    ],
+                )
+            )
+            ui.emit(ui.muted(term, "  Say what you want BABAS to do. Type help for commands, exit to close, Ctrl+C to stop a task."))
             if use_voice_mode and voice_gui:
-                print("\nOpening voice control panel...")
+                _line("running", "Opening voice control panel...")
                 await asyncio.to_thread(voice_gui.open, butler)
                 await asyncio.sleep(1)
             if butler and butler.enabled:
@@ -470,7 +560,8 @@ async def amain(settings: Settings) -> None:
                 try:
                     if use_voice_mode and voice_gui and voice_gui.is_open:
                         if voice_gui.close_requested():
-                            print("\nClosing BABAS...")
+                            ui.emit()
+                            _line("info", "Closing BABAS...")
                             if butler and butler.enabled:
                                 butler.goodbye()
                             break
@@ -478,17 +569,19 @@ async def amain(settings: Settings) -> None:
                         if not voice_command:
                             continue
                         if voice_command == "__CLOSE__":
-                            print("\nClosing BABAS...")
+                            ui.emit()
+                            _line("info", "Closing BABAS...")
                             if butler and butler.enabled:
                                 butler.goodbye()
                             break
-                        print(f"\nCommand: \"{redact(voice_command)}\"")
+                        ui.emit()
+                        _line("info", f"Command: \"{redact(voice_command)}\"")
                         user_input = voice_command
                         if butler and butler.enabled:
                             butler.say(f"Understood: {redact(voice_command)[:30]}")
                     else:
-                        print("\nWhat would you like to do? (or 'exit')")
-                        user_input = (await _ainput(">>> ")).strip()
+                        ui.emit()
+                        user_input = (await _ainput(ui.prompt(term))).strip()
                         if not user_input:
                             continue
                     cmd = user_input.lower()
@@ -497,36 +590,39 @@ async def amain(settings: Settings) -> None:
                             voice_gui.close()
                         if butler and butler.enabled:
                             butler.goodbye()
-                        print("\nGoodbye!")
+                        _line("success", "Goodbye!")
                         break
                     if cmd in ["help", "?"]:
                         show_help()
                         continue
                     if cmd == "tabs":
-                        print("\nTabs:")
+                        rows = []
                         for name in driver.list_tabs():
                             page = driver.get_tab_page(name)
-                            marker = "->" if name == driver.current_tab else "  "
+                            marker = term.glyph("pointer") if name == driver.current_tab else ""
                             try:
-                                title = redact(await page.title() or page.url)[:40]
-                                print(f"   {marker} [{name}] {title}")
+                                title = redact(await page.title() or page.url)
                             except Exception:
-                                print(f"   {marker} [{name}] (error)")
+                                title = "(error)"
+                            rows.append([marker, name, title])
+                        ui.emit()
+                        ui.emit(render_tabs(term, rows))
                         continue
                     if cmd == "new":
-                        await driver.new_tab()
+                        new_name = await driver.new_tab()
+                        _line("success", f"New tab: '{new_name}'" if isinstance(new_name, str) else "New tab opened")
                         continue
                     if cmd in ["screenshot", "ss"]:
                         filename = f"screenshot_{datetime.now().strftime('%H%M%S')}.png"
                         image = await driver.screenshot()
                         with open(filename, "wb") as f:
                             f.write(image)
-                        print(f"   Saved: {filename}")
+                        _line("success", f"Saved: {filename}")
                         continue
                     if cmd in ["mute", "shh", "shut up", "silence"]:
                         if butler and butler.enabled:
                             butler.shut_up()
-                            print("   Muted")
+                            _line("success", "Muted")
                         continue
                     if any(word in cmd for word in ["hack", "hacker"]):
                         if use_voice_mode and voice_gui and voice_gui.is_open:
@@ -536,43 +632,46 @@ async def amain(settings: Settings) -> None:
                             voice_gui.set_status("Ready", "#00ff88")
                             voice_gui.show_message("Hack complete\n\nRecord another command.")
                         continue
-                    print()
+                    ui.emit()
                     gui = voice_gui if (use_voice_mode and voice_gui and voice_gui.is_open) else None
                     try:
                         await run_task(driver, policy, user_input, gui, butler, settings=settings)
                     except Exception as e:
-                        print(f"\nError: {redact(str(e))}")
+                        ui.emit()
+                        ui.emit(ui.error_panel(term, redact(str(e))))
                         _gui_result(gui, "Error", "#ff4757", f"Error: {redact(str(e))}")
                         continue
                 except KeyboardInterrupt:
-                    print("\n\n(Ctrl+C - type 'exit' to close)")
+                    ui.emit()
+                    _line("info", "(Ctrl+C - type 'exit' to close)")
                     continue
-            print("\nClosing session...")
+            ui.emit()
+            ui.emit(ui.rule(term, "Closing"))
             tabs_closed = await driver.close()
             if tabs_closed > 0:
-                print(f"   {tabs_closed} tab(s) closed")
+                _line("success", f"{tabs_closed} tab(s) closed")
             if driver.attached:
-                print("   Your browser is still open (without BABAS tabs)")
+                _line("info", "Your browser is still open (without BABAS tabs)")
             else:
-                print("   Browser closed")
+                _line("info", "Browser closed")
             cleanup_temp_dir()
             if mode == "new" and profile_path:
                 try:
                     shutil.rmtree(profile_path, ignore_errors=True)
-                    print("   Temp profile deleted")
+                    _line("success", "Temp profile deleted")
                 except Exception:
                     pass
-            print("   Session ended")
+            _line("success", "Session ended")
             voice.shutdown_butler()
     except Exception as e:
-        print(f"\nFatal error: {redact(str(e))}")
+        ui.emit()
+        ui.emit(ui.error_panel(term, redact(str(e)), title="Fatal error"))
         cleanup_temp_dir()
         voice.shutdown_butler()
         raise
 
 
 def main(settings: Optional[Settings] = None) -> None:
-    print("Loading environment...")
     if settings is None:
         try:
             settings = Settings.from_env()
@@ -583,7 +682,8 @@ def main(settings: Optional[Settings] = None) -> None:
     try:
         asyncio.run(amain(settings))
     except KeyboardInterrupt:
-        print("\nCancelled")
+        ui.emit()
+        _line("warn", "Cancelled")
         cleanup_temp_dir()
         voice.shutdown_butler()
         _exit_if_input_pending()

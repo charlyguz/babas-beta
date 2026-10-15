@@ -73,7 +73,7 @@ class BabasControlPanel(ctk.CTkToplevel):
         ctk.CTkLabel(voice_frame, text="Voice Command", font=("Segoe UI", 14, "bold"), text_color=Colors.TEXT).pack(pady=(15, 5))
         self.mic_btn = ctk.CTkButton(voice_frame, text="Record", width=100, height=100, corner_radius=50, font=("Segoe UI", 14), fg_color=Colors.BG, hover_color=Colors.ACCENT, border_width=3, border_color=Colors.ACCENT, command=self._toggle_recording)
         self.mic_btn.pack(pady=10)
-        self.mic_status = ctk.CTkLabel(voice_frame, text="Click to record", font=("Segoe UI", 11), text_color=Colors.TEXT_DIM)
+        self.mic_status = ctk.CTkLabel(voice_frame, text="Click to record", font=("Segoe UI", 11), text_color=Colors.TEXT_DIM, wraplength=340)
         self.mic_status.pack(pady=(0, 15))
 
         plan_frame = ctk.CTkFrame(self, fg_color=Colors.CARD, corner_radius=15)
@@ -176,7 +176,8 @@ class BabasControlPanel(ctk.CTkToplevel):
             self.status_indicator.configure(text="Error", text_color=Colors.RED)
             return
         if not text:
-            self.mic_status.configure(text="Could not transcribe", text_color=Colors.RED)
+            reason = getattr(self.transcriber, "last_error", None) or "Could not transcribe"
+            self.mic_status.configure(text=reason, text_color=Colors.RED)
             self.status_indicator.configure(text="Error", text_color=Colors.RED)
             return
         self.mic_status.configure(text=f"\"{text[:30]}...\"", text_color=Colors.GREEN)
