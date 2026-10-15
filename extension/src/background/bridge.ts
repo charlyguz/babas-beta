@@ -28,6 +28,7 @@ export class Bridge {
   private keepalive: ReturnType<typeof setInterval> | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private backoff = MIN_BACKOFF_MS;
+  private epoch = 0;
   private handlers = new Map<string, RequestHandler>();
   private statusListeners = new Set<StatusListener>();
   private welcomeListeners = new Set<WelcomeListener>();
@@ -51,10 +52,17 @@ export class Bridge {
     this.helloExtras = fn;
   }
 
+  private get alive(): boolean {
+    return this.ws !== null && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING);
+  }
+
   async connect(): Promise<void> {
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
+    if (this.alive) return;
     clearTimeout(this.reconnectTimer);
+    const epoch = this.epoch;
     const port = await getBridgePort();
+    // Two callers (onInstalled and the top-level call) can both get here while the port is being read.
+    if (epoch !== this.epoch || this.alive) return;
     let ws: WebSocket;
     try {
       ws = new WebSocket(`ws://127.0.0.1:${port}/`);
@@ -64,23 +72,29 @@ export class Bridge {
     }
     this.ws = ws;
     ws.onopen = async () => {
+      if (this.ws !== ws) return;
       this.backoff = MIN_BACKOFF_MS;
       const extras = await this.helloExtras().catch(() => ({}));
-      this.send({
-        v: PROTOCOL_VERSION,
-        id: newId(),
-        type: 'hello',
-        payload: { ext_version: chrome.runtime.getManifest().version, protocol: PROTOCOL_VERSION, ...extras },
-      });
+      if (this.ws !== ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(
+        JSON.stringify({
+          v: PROTOCOL_VERSION,
+          id: newId(),
+          type: 'hello',
+          payload: { ext_version: chrome.runtime.getManifest().version, protocol: PROTOCOL_VERSION, ...extras },
+        }),
+      );
       clearInterval(this.keepalive);
       this.keepalive = setInterval(() => this.emit('ping', {}), KEEPALIVE_MS);
     };
     ws.onmessage = (event) => {
-      void this.onMessage(event.data);
+      if (this.ws === ws) void this.onMessage(event.data);
     };
     ws.onclose = () => {
+      // A socket that was already replaced must not tear down the live one.
+      if (this.ws !== ws) return;
       clearInterval(this.keepalive);
-      if (this.ws === ws) this.ws = null;
+      this.ws = null;
       this.setConnected(false);
       this.scheduleReconnect();
     };
@@ -88,8 +102,12 @@ export class Bridge {
   }
 
   async reconnect(): Promise<void> {
-    this.ws?.close();
+    this.epoch++;
+    const old = this.ws;
     this.ws = null;
+    clearInterval(this.keepalive);
+    old?.close();
+    this.setConnected(false);
     await this.connect();
   }
 

@@ -151,6 +151,9 @@ Set `chrome.storage.local.bridgePort` from the service worker to point it at a t
   `babas/drivers/page_script.js`. CI fails if it is stale.
 - Branded Chrome ≥137 ignores `--load-extension`, so automated tests use Playwright's Chromium with `channel="chromium"`.
 - websockets ≥15 honors `HTTPS_PROXY`: test clients must pass `proxy=None` and an explicit `origin=`.
+- `Bridge.connect()` runs from `onInstalled`, `onStartup`, the alarm and the top level of the SW, often together: re-check
+  `alive` after the `await`, and ignore events of any socket that is no longer `this.ws` (a stale `onclose` once flipped the
+  panel to "Sin conexión" while the server saw the extension connected).
 - MV3 service workers sleep after 30 s idle. The SW pings every 20 s and an alarm reconnects every 30 s. Keep state in
   `chrome.storage.session`/`local`, never only in module variables that must survive.
 - The content script runs in an isolated world. `page_script.js` in the Playwright path runs in the main world, where
