@@ -5,15 +5,18 @@ import {
   activeRequest,
   canSend,
   initialState,
+  micBlockedByRequest,
   micDisabled,
   micLabelKey,
   reduce,
   runStateKey,
+  showCancel,
   showPermissionButton,
   showResume,
   showStop,
   statusKey,
   voiceErrorKey,
+  voiceNoticeKey,
   voiceStatusKey,
   type PanelAction,
   type PanelState,
@@ -286,10 +289,63 @@ describe('voice input', () => {
     expect(micDisabled(run([sw({ type: 'run_state', state: 'running' })], online()))).toBe(false);
   });
 
+  it('the microphone cannot start while a card waits for an answer, but a recording in progress can still finish', () => {
+    const ask = sw({ type: 'ask', request_id: 'a1', question: '¿Cómo se llama?', kind: 'text' });
+    const allow = sw({ type: 'allow', request_id: 'p1', host: 'example.org', url: 'https://example.org/' });
+    for (const action of [confirm('c1'), ask, allow]) {
+      const waiting = run([action], online());
+      expect(micBlockedByRequest(waiting)).toBe(true);
+      expect(micDisabled(waiting)).toBe(true);
+      expect(micDisabled(run([{ type: 'voice.starting' }, { type: 'voice.recording' }], run([action], online())))).toBe(false);
+    }
+    const answered = run([confirm('c1'), { type: 'request.answered', request_id: 'c1' }], online());
+    expect(micBlockedByRequest(answered)).toBe(false);
+    expect(micDisabled(answered)).toBe(false);
+    expect(micBlockedByRequest(run([confirm('c1')]))).toBe(false);
+  });
+
+  it('only offers to cancel while preparing or recording', () => {
+    expect(showCancel(online())).toBe(false);
+    expect(showCancel(run([{ type: 'voice.starting' }], online()))).toBe(true);
+    expect(showCancel(recording())).toBe(true);
+    expect(showCancel(transcribing())).toBe(false);
+  });
+
+  it('cancelling goes back to idle with a notice and no error, and only from preparing or recording', () => {
+    for (const s of [run([{ type: 'voice.starting' }], online()), recording()]) {
+      expect(run([{ type: 'voice.cancelled' }], s)).toMatchObject({ voice: 'idle', voiceError: null, voiceNotice: 'cancelled', voiceRequestId: null });
+    }
+    const idle = online();
+    expect(run([{ type: 'voice.cancelled' }], idle)).toBe(idle);
+    const waiting = transcribing();
+    expect(run([{ type: 'voice.cancelled' }], waiting)).toBe(waiting);
+  });
+
+  it('the cancel notice is cleared by the next attempt, a failure or a sent task', () => {
+    const cancelled = run([{ type: 'voice.cancelled' }], recording());
+    expect(voiceNoticeKey('cancelled')).toBe('voiceCancelled');
+    expect(run([{ type: 'voice.starting' }], cancelled).voiceNotice).toBeNull();
+    expect(run([{ type: 'voice.failed', code: 'empty' }], cancelled).voiceNotice).toBeNull();
+    expect(run([{ type: 'user.sent', text: 'hola', ts: 1 }], cancelled).voiceNotice).toBeNull();
+  });
+
+  it('a granted permission clears only the permission error', () => {
+    const refused = run([{ type: 'voice.failed', code: 'permission' }], online());
+    expect(run([{ type: 'voice.permission_granted' }], refused)).toMatchObject({ voice: 'idle', voiceError: null, voiceNotice: 'permission_granted' });
+    expect(voiceNoticeKey('permission_granted')).toBe('voicePermissionOk');
+    const other = run([{ type: 'voice.failed', code: 'empty' }], online());
+    expect(run([{ type: 'voice.permission_granted' }], other)).toBe(other);
+    const idle = online();
+    expect(run([{ type: 'voice.permission_granted' }], idle)).toBe(idle);
+    const starting = run([{ type: 'voice.starting' }], refused);
+    expect(run([{ type: 'voice.permission_granted' }], starting)).toBe(starting);
+  });
+
   it('labels the button and the status text for each phase', () => {
     expect(micLabelKey(online())).toBe('voiceStart');
     expect(micLabelKey(recording())).toBe('voiceFinish');
-    expect(micLabelKey(transcribing())).toBe('voiceStart');
+    expect(micLabelKey(run([{ type: 'voice.starting' }], online()))).toBe('voiceWait');
+    expect(micLabelKey(transcribing())).toBe('voiceWait');
     expect(voiceStatusKey(online())).toBeNull();
     expect(voiceStatusKey(run([{ type: 'voice.starting' }], online()))).toBe('voiceStarting');
     expect(voiceStatusKey(recording())).toBe('voiceListening');

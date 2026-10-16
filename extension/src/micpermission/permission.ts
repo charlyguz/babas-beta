@@ -1,5 +1,5 @@
 export type Translate = (key: string, substitutions?: string | string[]) => string;
-export type PermissionResult = 'granted' | 'denied' | 'no_device' | 'error';
+export type PermissionResult = 'granted' | 'denied' | 'no_device' | 'mic_busy' | 'error';
 
 export const STUCK_PROMPT_MS = 20_000;
 
@@ -15,6 +15,7 @@ const MESSAGE_KEYS: Record<PermissionResult, string> = {
   granted: 'micPermDone',
   denied: 'micPermDenied',
   no_device: 'micPermNoDevice',
+  mic_busy: 'micPermBusy',
   error: 'micPermError',
 };
 
@@ -29,6 +30,10 @@ export function classifyMicrophoneError(err: unknown): Exclude<PermissionResult,
     case 'DevicesNotFoundError':
     case 'OverconstrainedError':
       return 'no_device';
+    case 'NotReadableError':
+    case 'TrackStartError':
+    case 'AbortError':
+      return 'mic_busy';
     default:
       return 'error';
   }
@@ -63,6 +68,10 @@ export function mountPermissionPage(root: HTMLElement, deps: PermissionPageDeps)
   const intro = document.createElement('p');
   intro.className = 'intro';
   intro.textContent = t('micPermIntro');
+  const privacy = document.createElement('p');
+  privacy.className = 'intro privacy';
+  privacy.dataset.testid = 'privacy';
+  privacy.textContent = t('micPermPrivacy');
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'allow';
@@ -73,7 +82,7 @@ export function mountPermissionPage(root: HTMLElement, deps: PermissionPageDeps)
   status.dataset.testid = 'result';
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
-  root.append(title, intro, button, status);
+  root.append(title, intro, privacy, button, status);
 
   const setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = deps.clearTimer ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));

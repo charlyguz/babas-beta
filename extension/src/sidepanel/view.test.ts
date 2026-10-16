@@ -562,9 +562,15 @@ class FakeRecorder implements VoiceRecorderLike {
   }
 }
 
+interface PermissionWatch {
+  onGranted: () => void;
+  stopped: boolean;
+}
+
 interface VoiceHarness extends Harness {
   recorders: FakeRecorder[];
   opened: { count: number };
+  watchers: PermissionWatch[];
   rec(): FakeRecorder;
 }
 
@@ -574,6 +580,7 @@ function setupVoice(options: { sendOk?: boolean; voice?: boolean; timeoutMs?: nu
   const sent: PanelToSw[] = [];
   const recorders: FakeRecorder[] = [];
   const opened = { count: 0 };
+  const watchers: PermissionWatch[] = [];
   let ids = 0;
   const view = mountPanel(root, {
     t: tEs,
@@ -597,16 +604,24 @@ function setupVoice(options: { sendOk?: boolean; voice?: boolean; timeoutMs?: nu
     openMicPermission: () => {
       opened.count += 1;
     },
+    watchMicPermission: (onGranted) => {
+      const watch = { onGranted, stopped: false };
+      watchers.push(watch);
+      return () => {
+        watch.stopped = true;
+      };
+    },
     newRequestId: () => `voz-${(ids += 1)}`,
     transcribeTimeoutMs: options.timeoutMs ?? 100_000,
   });
-  return { view, sent, root, recorders, opened, rec: () => recorders[recorders.length - 1] as FakeRecorder };
+  return { view, sent, root, recorders, opened, watchers, rec: () => recorders[recorders.length - 1] as FakeRecorder };
 }
 
 const flush = async (): Promise<void> => {
   for (let i = 0; i < 6; i += 1) await Promise.resolve();
 };
 const mic = (h: Harness): HTMLButtonElement => q<HTMLButtonElement>(h, 'mic');
+const micOff = (h: Harness): boolean => mic(h).getAttribute('aria-disabled') === 'true';
 const input = (h: Harness): HTMLTextAreaElement => q<HTMLTextAreaElement>(h, 'task-input');
 const voiceText = (h: Harness): string => text(q(h, 'voice-status'));
 
@@ -655,15 +670,18 @@ describe('voice: the microphone button', () => {
     expect(mic(h).hidden).toBe(false);
   });
 
-  it('is disabled while disconnected and enabled once connected', () => {
+  it('is unavailable while disconnected and available once connected, without a native disabled state', () => {
     const h = setupVoice();
-    expect(mic(h).disabled).toBe(true);
+    expect(micOff(h)).toBe(true);
+    expect(mic(h).disabled).toBe(false);
     mic(h).click();
     expect(h.recorders).toHaveLength(0);
     online(h);
-    expect(mic(h).disabled).toBe(false);
+    expect(micOff(h)).toBe(false);
+    expect(mic(h).hasAttribute('aria-disabled')).toBe(false);
     h.view.dispatch({ type: 'port', up: false });
-    expect(mic(h).disabled).toBe(true);
+    expect(micOff(h)).toBe(true);
+    expect(mic(h).disabled).toBe(false);
   });
 
   it('keeps an aria-live status region, empty at first', () => {
@@ -680,12 +698,12 @@ describe('voice: the microphone button', () => {
     const h = setupVoice();
     online(h);
     sw(h, { type: 'run_state', state: 'running' });
-    expect(mic(h).disabled).toBe(false);
+    expect(micOff(h)).toBe(false);
   });
 });
 
 describe('voice: recording', () => {
-  it('asks for the microphone on click and shows the preparing state, disabled', () => {
+  it('asks for the microphone on click and shows the preparing state, unavailable and with a waiting label', () => {
     const h = setupVoice();
     online(h);
     mic(h).click();
@@ -693,19 +711,20 @@ describe('voice: recording', () => {
     expect(h.rec().started).toBe(1);
     expect(h.view.getState().voice).toBe('starting');
     expect(voiceText(h)).toBe('Preparando el micrófono…');
-    expect(mic(h).disabled).toBe(true);
-    expect(text(mic(h))).toBe('Hablar');
+    expect(micOff(h)).toBe(true);
+    expect(mic(h).getAttribute('aria-busy')).toBe('true');
+    expect(text(mic(h))).toBe('Espere…');
   });
 
-  it('shows the listening state, the live level and turns the button into Listo', async () => {
+  it('shows the listening state, the live level and turns the button into Terminar', async () => {
     const h = setupVoice();
     await startRecording(h);
     expect(h.view.getState().voice).toBe('recording');
-    expect(text(mic(h))).toBe('Listo');
+    expect(text(mic(h))).toBe('Terminar');
     expect(mic(h).dataset.phase).toBe('recording');
-    expect(mic(h).disabled).toBe(false);
+    expect(micOff(h)).toBe(false);
     expect(voiceText(h)).toContain('Estoy escuchando…');
-    expect(voiceText(h)).toContain('presione «Listo»');
+    expect(voiceText(h)).toContain('presione «Terminar»');
     const level = q(h, 'voice-level');
     expect(level.hidden).toBe(false);
     expect(level.getAttribute('aria-hidden')).toBe('true');
@@ -721,7 +740,7 @@ describe('voice: recording', () => {
     expect(h.sent.filter((m) => m.type === 'task.start')).toEqual([]);
   });
 
-  it('clicking Listo sends the audio once and shows the transcribing state', async () => {
+  it('clicking Terminar sends the audio once and shows the transcribing state', async () => {
     const h = setupVoice();
     const recorder = await startRecording(h);
     mic(h).click();
@@ -729,7 +748,8 @@ describe('voice: recording', () => {
     expect(h.sent).toEqual([{ type: 'voice.audio', request_id: 'voz-1', audio_base64: 'QUJD', duration_ms: 1234 }]);
     expect(h.view.getState()).toMatchObject({ voice: 'transcribing', voiceRequestId: 'voz-1' });
     expect(voiceText(h)).toBe('Escribiendo lo que dijo…');
-    expect(mic(h).disabled).toBe(true);
+    expect(micOff(h)).toBe(true);
+    expect(text(mic(h))).toBe('Espere…');
     mic(h).click();
     expect(h.sent).toHaveLength(1);
     expect(h.recorders).toHaveLength(1);
@@ -774,7 +794,7 @@ describe('voice: the transcript fills the text box', () => {
     expect(input(h).selectionEnd).toBe(input(h).value.length);
     expect(h.sent.map((m) => m.type)).toEqual(['voice.audio']);
     expect(h.view.getState().voice).toBe('idle');
-    expect(mic(h).disabled).toBe(false);
+    expect(micOff(h)).toBe(false);
     expect(text(mic(h))).toBe('Hablar');
     expect(voiceText(h)).toBe('');
   });
@@ -881,7 +901,7 @@ describe('voice: errors', () => {
     expect(tEs(key)).not.toBe(key);
     expect(error.closest('[aria-live="polite"]')).toBe(q(h, 'voice-status'));
     expect(h.view.getState().voice).toBe('idle');
-    expect(mic(h).disabled).toBe(false);
+    expect(micOff(h)).toBe(false);
     expect(input(h).value).toBe('');
   });
 
@@ -1112,5 +1132,424 @@ describe('voice: Stop is unrelated', () => {
     expect(h.sent.at(-1)).toEqual({ type: 'stop' });
     sw(h, { type: 'voice.result', request_id: 'voz-1', text: 'hola' });
     expect(input(h).value).toBe('hola');
+  });
+});
+
+const showAsk = (h: Harness, id = 'a1'): void => sw(h, { type: 'ask', request_id: id, question: '¿Cómo se llama la persona?', kind: 'text' });
+const showHandoff = (h: Harness, id = 'h1'): void => sw(h, { type: 'ask', request_id: id, question: 'Resuelva el CAPTCHA y presione «Listo».', kind: 'handoff' });
+const buttonNames = (h: Harness): string[] => [...h.root.querySelectorAll<HTMLElement>('button')].filter((b) => !b.hidden && !b.closest('[hidden]')).map((b) => text(b));
+
+describe('voice: the focus stays on the microphone button', () => {
+  it('keeps the same focused node from the click to the transcript, so the same key finishes the recording', async () => {
+    const h = setupVoice();
+    online(h);
+    const node = mic(h);
+    node.focus();
+    expect(document.activeElement).toBe(node);
+    node.click();
+    expect(h.view.getState().voice).toBe('starting');
+    expect(document.activeElement).toBe(node);
+    h.rec().grant();
+    await flush();
+    expect(h.view.getState().voice).toBe('recording');
+    expect(mic(h)).toBe(node);
+    expect(document.activeElement).toBe(node);
+    expect(text(node)).toBe('Terminar');
+    node.click();
+    expect(h.view.getState().voice).toBe('transcribing');
+    expect(document.activeElement).toBe(node);
+    sw(h, { type: 'voice.result', request_id: 'voz-1', text: 'hola' });
+    expect(h.view.getState().voice).toBe('idle');
+    expect(text(node)).toBe('Hablar');
+  });
+
+  it('never uses the native disabled state, which would drop the focus', async () => {
+    const h = setupVoice();
+    online(h);
+    mic(h).focus();
+    const seen: boolean[] = [];
+    const watch = (): void => {
+      seen.push(mic(h).disabled);
+    };
+    mic(h).click();
+    watch();
+    h.rec().grant();
+    await flush();
+    watch();
+    mic(h).click();
+    watch();
+    h.view.dispatch({ type: 'port', up: false });
+    watch();
+    expect(seen).toEqual([false, false, false, false]);
+  });
+
+  it('ignores a click on the button while it is waiting', async () => {
+    const h = setupVoice();
+    online(h);
+    mic(h).click();
+    mic(h).click();
+    expect(h.recorders).toHaveLength(1);
+    h.rec().grant();
+    await flush();
+    mic(h).click();
+    mic(h).click();
+    expect(h.sent.filter((m) => m.type === 'voice.audio')).toHaveLength(1);
+  });
+});
+
+describe('voice: waiting and finishing labels', () => {
+  it('shows a waiting label and a spinner, not Hablar, while preparing and while writing', async () => {
+    const h = setupVoice();
+    online(h);
+    expect(text(mic(h))).toBe('Hablar');
+    mic(h).click();
+    expect(text(mic(h))).toBe('Espere…');
+    expect(mic(h).querySelector('.mic-icon-wait')).not.toBeNull();
+    h.rec().grant();
+    await flush();
+    expect(text(mic(h))).toBe('Terminar');
+    mic(h).click();
+    expect(text(mic(h))).toBe('Espere…');
+    expect(mic(h).dataset.phase).toBe('transcribing');
+    expect(mic(h).getAttribute('aria-busy')).toBe('true');
+    sw(h, { type: 'voice.result', request_id: 'voz-1', text: 'hola' });
+    expect(text(mic(h))).toBe('Hablar');
+    expect(mic(h).getAttribute('aria-busy')).toBe('false');
+  });
+
+  it('does not name the finish button like the handoff button', async () => {
+    const h = setupVoice();
+    await startRecording(h);
+    showHandoff(h);
+    const names = buttonNames(h);
+    expect(names).toContain('Listo');
+    expect(names).toContain('Terminar');
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('does not name the voice cancel button like the cancel button of a question card', async () => {
+    const h = setupVoice();
+    await startRecording(h);
+    showAsk(h);
+    const names = buttonNames(h);
+    expect(names).toContain('Cancelar');
+    expect(names).toContain('Cancelar grabación');
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('tells the person that a pause also ends the recording', async () => {
+    const h = setupVoice();
+    await startRecording(h);
+    const hint = text(q(h, 'voice-hint'));
+    expect(hint).toContain('presione «Terminar»');
+    expect(hint).toContain('pausa');
+    expect(hint).toContain('se detiene sola');
+  });
+});
+
+describe('voice: a pending card owns the next answer', () => {
+  it('cannot start while a question card is open, and says why', () => {
+    const h = setupVoice();
+    online(h);
+    sw(h, { type: 'run_state', state: 'running' });
+    showAsk(h);
+    expect(micOff(h)).toBe(true);
+    mic(h).click();
+    expect(h.recorders).toHaveLength(0);
+    expect(h.view.getState().voice).toBe('idle');
+    const note = q(h, 'voice-note');
+    expect(note.hidden).toBe(false);
+    expect(text(note)).toBe('Para hablar, primero responda la pregunta de arriba.');
+    expect(mic(h).getAttribute('aria-describedby')).toBe(note.id);
+    expect(input(h).value).toBe('');
+  });
+
+  it.each([
+    ['confirm', (h: Harness) => showConfirm(h)],
+    ['allow', (h: Harness) => sw(h, { type: 'allow', request_id: 'p1', host: 'example.org', url: 'https://example.org/' })],
+    ['handoff', (h: Harness) => showHandoff(h)],
+  ])('cannot start while a %s card is open', (_name, show) => {
+    const h = setupVoice();
+    online(h);
+    show(h);
+    expect(micOff(h)).toBe(true);
+    mic(h).click();
+    expect(h.recorders).toHaveLength(0);
+  });
+
+  it('is available again once the card is answered, and the note goes away', () => {
+    const h = setupVoice();
+    online(h);
+    showAsk(h);
+    expect(micOff(h)).toBe(true);
+    q(h, 'ask-cancel').click();
+    expect(micOff(h)).toBe(false);
+    expect(q(h, 'voice-note').hidden).toBe(true);
+    expect(mic(h).hasAttribute('aria-describedby')).toBe(false);
+    mic(h).click();
+    expect(h.recorders).toHaveLength(1);
+  });
+
+  it('does not show the note when the mic is unavailable for another reason', () => {
+    const h = setupVoice();
+    expect(q(h, 'voice-note').hidden).toBe(true);
+    online(h);
+    expect(q(h, 'voice-note').hidden).toBe(true);
+  });
+
+  it('a recording that was already going can still be finished', async () => {
+    const h = setupVoice();
+    const recorder = await startRecording(h);
+    showAsk(h);
+    expect(micOff(h)).toBe(false);
+    expect(q(h, 'voice-note').hidden).toBe(true);
+    mic(h).click();
+    expect(recorder.finished).toBe(1);
+  });
+
+  it('a transcript that arrives while the question card has the focus does not steal it', async () => {
+    const h = setupVoice();
+    await startRecording(h);
+    mic(h).click();
+    showAsk(h);
+    const field = q<HTMLInputElement>(h, 'ask-input');
+    field.focus();
+    expect(document.activeElement).toBe(field);
+    sw(h, { type: 'voice.result', request_id: 'voz-1', text: 'María López' });
+    expect(document.activeElement).toBe(field);
+    expect(field.value).toBe('');
+    expect(q(h, 'ask-reply').hasAttribute('disabled')).toBe(true);
+    expect(input(h).value).toBe('María López');
+  });
+
+  it('a transcript that arrives while a confirmation card has the focus does not steal it', async () => {
+    const h = setupVoice();
+    await startRecording(h);
+    mic(h).click();
+    showConfirm(h);
+    const card = q(h, 'confirm-card');
+    expect(document.activeElement).toBe(card);
+    sw(h, { type: 'voice.result', request_id: 'voz-1', text: 'hola' });
+    expect(document.activeElement).toBe(card);
+    expect(input(h).value).toBe('hola');
+  });
+
+  it('keeps the focus where the person moved it meanwhile, and takes it from the mic or from nowhere', async () => {
+    const h = setupVoice();
+    await startRecording(h);
+    mic(h).click();
+    const port = q<HTMLInputElement>(h, 'settings-port');
+    port.focus();
+    sw(h, { type: 'voice.result', request_id: 'voz-1', text: 'hola' });
+    expect(document.activeElement).toBe(port);
+    expect(input(h).value).toBe('hola');
+
+    const again = setupVoice();
+    await startRecording(again);
+    mic(again).click();
+    (document.activeElement as HTMLElement | null)?.blur();
+    sw(again, { type: 'voice.result', request_id: 'voz-1', text: 'hola' });
+    expect(document.activeElement).toBe(input(again));
+  });
+});
+
+describe('voice: Cancelar discards the recording', () => {
+  it('is only offered while preparing and while recording', async () => {
+    const h = setupVoice();
+    online(h);
+    expect(q(h, 'voice-cancel').hidden).toBe(true);
+    mic(h).click();
+    expect(q(h, 'voice-cancel').hidden).toBe(false);
+    h.rec().grant();
+    await flush();
+    expect(q(h, 'voice-cancel').hidden).toBe(false);
+    expect(text(q(h, 'voice-cancel'))).toBe('Cancelar grabación');
+    mic(h).click();
+    expect(q(h, 'voice-cancel').hidden).toBe(true);
+    sw(h, { type: 'voice.result', request_id: 'voz-1', text: 'hola' });
+    expect(q(h, 'voice-cancel').hidden).toBe(true);
+  });
+
+  it('throws the audio away, sends nothing, frees the microphone and says so', async () => {
+    const h = setupVoice();
+    const recorder = await startRecording(h);
+    q(h, 'voice-cancel').click();
+    expect(recorder.cancelled).toBe(1);
+    expect(recorder.finished).toBe(0);
+    expect(recorder.active).toBe(false);
+    expect(h.sent).toEqual([]);
+    expect(h.view.getState()).toMatchObject({ voice: 'idle', voiceError: null, voiceNotice: 'cancelled', voiceRequestId: null });
+    expect(text(q(h, 'voice-notice'))).toBe('Se canceló la grabación. No se envió nada.');
+    expect(h.root.querySelector('[data-testid=voice-error]')).toBeNull();
+    expect(q(h, 'voice-level').hidden).toBe(true);
+    expect(q(h, 'voice-cancel').hidden).toBe(true);
+    expect(text(mic(h))).toBe('Hablar');
+    expect(micOff(h)).toBe(false);
+    expect(input(h).value).toBe('');
+    vi.advanceTimersByTime(200_000);
+    expect(h.sent).toEqual([]);
+    expect(h.view.getState().voiceError).toBeNull();
+  });
+
+  it('ignores a late automatic stop and leaves no watchdog behind', async () => {
+    const h = setupVoice();
+    const recorder = await startRecording(h);
+    q(h, 'voice-cancel').click();
+    recorder.hooks.onAutoStop?.();
+    expect(recorder.finished).toBe(0);
+    expect(h.sent).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('moves the focus to the mic button, which is where the person is going next', async () => {
+    const h = setupVoice();
+    await startRecording(h);
+    q(h, 'voice-cancel').focus();
+    q(h, 'voice-cancel').click();
+    expect(document.activeElement).toBe(mic(h));
+  });
+
+  it('cancels the permission wait too, even if the stream arrives later', async () => {
+    const h = setupVoice();
+    online(h);
+    mic(h).click();
+    const recorder = h.rec();
+    q(h, 'voice-cancel').click();
+    expect(recorder.cancelled).toBe(1);
+    expect(h.view.getState()).toMatchObject({ voice: 'idle', voiceError: null, voiceNotice: 'cancelled' });
+    recorder.grant();
+    await flush();
+    expect(h.view.getState().voice).toBe('idle');
+    expect(h.sent).toEqual([]);
+    expect(text(q(h, 'voice-notice'))).toBe('Se canceló la grabación. No se envió nada.');
+  });
+
+  it('lets the person record again, and the notice goes away', async () => {
+    const h = setupVoice();
+    await startRecording(h);
+    q(h, 'voice-cancel').click();
+    mic(h).click();
+    expect(h.recorders).toHaveLength(2);
+    expect(h.root.querySelector('[data-testid=voice-notice]')).toBeNull();
+    h.rec().grant();
+    await flush();
+    mic(h).click();
+    expect(h.sent).toEqual([{ type: 'voice.audio', request_id: 'voz-1', audio_base64: 'QUJD', duration_ms: 1234 }]);
+  });
+
+  it('is announced in the live status region', async () => {
+    const h = setupVoice();
+    await startRecording(h);
+    q(h, 'voice-cancel').click();
+    expect(q(h, 'voice-notice').closest('[aria-live="polite"]')).toBe(q(h, 'voice-status'));
+  });
+});
+
+describe('voice: the permission page and the permission error', () => {
+  const refuse = async (h: VoiceHarness): Promise<void> => {
+    online(h);
+    mic(h).click();
+    h.rec().deny(new VoiceCaptureError('permission', 'x'));
+    await flush();
+  };
+
+  it('does not name a button that the browser prompt may not have', async () => {
+    const h = setupVoice();
+    await refuse(h);
+    const message = text(q(h, 'voice-error'));
+    expect(message).toBe(tEs('voiceErrPermission'));
+    expect(message).toContain('«Dar permiso»');
+    expect(message).not.toContain('«Permitir»');
+  });
+
+  it('watches the permission only while the error with Dar permiso is showing', async () => {
+    const h = setupVoice();
+    online(h);
+    expect(h.watchers).toHaveLength(0);
+    mic(h).click();
+    h.rec().deny(new VoiceCaptureError('permission', 'x'));
+    await flush();
+    expect(h.watchers).toHaveLength(1);
+    h.view.dispatch({ type: 'port', up: true });
+    expect(h.watchers).toHaveLength(1);
+    mic(h).click();
+    expect(h.watchers[0]?.stopped).toBe(true);
+    h.rec().deny(new VoiceCaptureError('no_device', 'x'));
+    await flush();
+    expect(h.watchers).toHaveLength(1);
+  });
+
+  it('clears the stale error and the button once the permission is granted, and says the mic is ready', async () => {
+    const h = setupVoice();
+    await refuse(h);
+    expect(q(h, 'voice-permission').hidden).toBe(false);
+    h.watchers[0]?.onGranted();
+    expect(h.view.getState()).toMatchObject({ voice: 'idle', voiceError: null, voiceNotice: 'permission_granted' });
+    expect(q(h, 'voice-permission').hidden).toBe(true);
+    expect(h.root.querySelector('[data-testid=voice-error]')).toBeNull();
+    expect(text(q(h, 'voice-notice'))).toBe('Ya tiene permiso para usar el micrófono. Presione «Hablar».');
+    expect(h.watchers[0]?.stopped).toBe(true);
+    mic(h).click();
+    expect(h.recorders).toHaveLength(2);
+    expect(h.root.querySelector('[data-testid=voice-notice]')).toBeNull();
+  });
+
+  it('a late grant after another error or another attempt changes nothing', async () => {
+    const h = setupVoice();
+    await refuse(h);
+    mic(h).click();
+    h.watchers[0]?.onGranted();
+    expect(h.view.getState()).toMatchObject({ voice: 'starting', voiceNotice: null });
+  });
+
+  it('stops watching when the view is disposed', async () => {
+    const h = setupVoice();
+    await refuse(h);
+    h.view.dispose();
+    expect(h.watchers[0]?.stopped).toBe(true);
+  });
+});
+
+describe('the text box grows with the dictated text', () => {
+  const stubScrollHeight = (value: number): void => {
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', { configurable: true, get: () => value });
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete (HTMLTextAreaElement.prototype as unknown as { scrollHeight?: number }).scrollHeight;
+  });
+
+  it('measures the text and sets the height when the browser has no field-sizing', async () => {
+    vi.stubGlobal('CSS', { supports: () => false });
+    stubScrollHeight(210);
+    const h = setupVoice();
+    await finishWithTranscript(h, 'una frase muy larga '.repeat(20));
+    expect(input(h).style.height).toBe('210px');
+    input(h).value = '';
+    input(h).dispatchEvent(new Event('input'));
+    stubScrollHeight(0);
+    input(h).dispatchEvent(new Event('input'));
+    expect(input(h).style.height).toBe('');
+  });
+
+  it('leaves the sizing to the browser when it supports field-sizing', async () => {
+    vi.stubGlobal('CSS', { supports: () => true });
+    stubScrollHeight(210);
+    const h = setupVoice();
+    await finishWithTranscript(h, 'hola');
+    expect(input(h).style.height).toBe('');
+  });
+
+  it('shows the start of a fresh dictation, and the end when the person added to what was typed', async () => {
+    stubScrollHeight(500);
+    const fresh = setupVoice();
+    await finishWithTranscript(fresh, 'uno dos tres');
+    expect(input(fresh).scrollTop).toBe(0);
+    const typed = setupVoice();
+    online(typed);
+    input(typed).value = 'busque';
+    await finishWithTranscript(typed, 'recetas');
+    expect(input(typed).scrollTop).toBe(500);
   });
 });

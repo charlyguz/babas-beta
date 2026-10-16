@@ -135,7 +135,7 @@ def test_speech_defaults():
     assert s.stt_model is None
     assert s.stt_base_url is None
     assert s.stt_api_key is None
-    assert s.stt_language == "es"
+    assert s.stt_language is None
 
 
 def test_speech_variables_are_parsed():
@@ -161,18 +161,23 @@ def test_every_speech_provider_is_accepted(provider):
 @pytest.mark.parametrize(
     "env, expected",
     [
-        ({}, "es"),
-        ({"BABAS_LANG": "en"}, "en"),
+        ({}, None),
+        ({"BABAS_LANG": "en"}, None),
         ({"BABAS_LANG": "en", "BABAS_STT_LANGUAGE": "es"}, "es"),
         ({"BABAS_STT_LANGUAGE": "ES-mx"}, "es-mx"),
         ({"BABAS_STT_LANGUAGE": "es-MX"}, "es-mx"),
         ({"BABAS_STT_LANGUAGE": "YUE"}, "yue"),
         ({"BABAS_STT_LANGUAGE": "zh-Hans"}, "zh-hans"),
-        ({"BABAS_STT_LANGUAGE": "   "}, "es"),
+        ({"BABAS_STT_LANGUAGE": "   "}, None),
     ],
 )
-def test_speech_language_defaults_to_the_interface_language_and_is_normalized(env, expected):
+def test_speech_language_is_only_set_when_configured_and_is_normalized(env, expected):
     assert settings(**env).stt_language == expected
+
+
+def test_an_unset_speech_language_leaves_the_choice_to_the_caller():
+    assert Settings().stt_language is None
+    assert Settings(language="en").stt_language is None
 
 
 def test_speech_endpoint_and_key_are_kept_apart_from_the_llm_ones():

@@ -41,7 +41,7 @@ class Settings:
     stt_model: Optional[str] = None
     stt_base_url: Optional[str] = None
     stt_api_key: Optional[str] = field(default=None, repr=False)
-    stt_language: str = "es"
+    stt_language: Optional[str] = None
 
     @property
     def pairing_file(self) -> Path:
@@ -109,8 +109,8 @@ class Settings:
         home = text("BABAS_HOME")
         host = text("BABAS_BRIDGE_HOST")
         language = choice("BABAS_LANG", "es", LANGUAGES)
-        stt_language = (text("BABAS_STT_LANGUAGE") or language).lower()
-        if not _STT_LANGUAGE.match(stt_language):
+        stt_language = (text("BABAS_STT_LANGUAGE") or "").lower() or None
+        if stt_language is not None and not _STT_LANGUAGE.match(stt_language):
             raise ValueError(f"BABAS_STT_LANGUAGE must look like es, en or es-MX, got {text('BABAS_STT_LANGUAGE')!r}")
 
         return cls(

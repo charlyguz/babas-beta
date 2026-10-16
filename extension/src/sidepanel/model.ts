@@ -16,7 +16,13 @@ export type RequestItem =
   | { kind: 'allow'; id: string; host: string; url: string };
 
 export type VoicePhase = 'idle' | 'starting' | 'recording' | 'transcribing';
+export type VoiceNotice = 'cancelled' | 'permission_granted';
 export type VoiceFailure = VoiceErrorCode | 'permission' | 'no_device' | 'mic_busy' | 'capture';
+
+const VOICE_NOTICE_KEYS: Record<VoiceNotice, string> = {
+  cancelled: 'voiceCancelled',
+  permission_granted: 'voicePermissionOk',
+};
 
 const VOICE_FAILURE_KEYS: Record<VoiceFailure, string> = {
   ...VOICE_ERROR_KEYS,
@@ -40,6 +46,7 @@ export interface PanelState {
   sites: string[];
   voice: VoicePhase;
   voiceError: VoiceFailure | null;
+  voiceNotice: VoiceNotice | null;
   voiceRequestId: string | null;
 }
 
@@ -52,7 +59,9 @@ export type PanelAction =
   | { type: 'voice.starting' }
   | { type: 'voice.recording' }
   | { type: 'voice.transcribing'; request_id: string }
-  | { type: 'voice.failed'; code: VoiceFailure };
+  | { type: 'voice.failed'; code: VoiceFailure }
+  | { type: 'voice.cancelled' }
+  | { type: 'voice.permission_granted' };
 
 export function initialState(): PanelState {
   return {
@@ -69,12 +78,13 @@ export function initialState(): PanelState {
     sites: [],
     voice: 'idle',
     voiceError: null,
+    voiceNotice: null,
     voiceRequestId: null,
   };
 }
 
 function voiceFailed(state: PanelState, code: VoiceFailure): PanelState {
-  return { ...state, voice: 'idle', voiceError: code, voiceRequestId: null };
+  return { ...state, voice: 'idle', voiceError: code, voiceNotice: null, voiceRequestId: null };
 }
 
 function isCurrentTranscription(state: PanelState, requestId: string): boolean {
@@ -164,19 +174,23 @@ export function reduce(state: PanelState, action: PanelAction): PanelState {
     case 'sw':
       return applySw(state, action.message);
     case 'user.sent':
-      return { ...appendLog(state, { kind: 'user', text: action.text, ts: action.ts }), runState: null, summary: null, voice: 'idle', voiceError: null, voiceRequestId: null };
+      return { ...appendLog(state, { kind: 'user', text: action.text, ts: action.ts }), runState: null, summary: null, voice: 'idle', voiceError: null, voiceNotice: null, voiceRequestId: null };
     case 'user.stopped':
       return { ...state, halted: true, running: false, runState: 'stopped', summary: null, queue: [] };
     case 'request.answered':
       return dequeue(state, action.request_id);
     case 'voice.starting':
-      return { ...state, voice: 'starting', voiceError: null, voiceRequestId: null };
+      return { ...state, voice: 'starting', voiceError: null, voiceNotice: null, voiceRequestId: null };
     case 'voice.recording':
       return state.voice === 'starting' ? { ...state, voice: 'recording' } : state;
     case 'voice.transcribing':
       return state.voice === 'recording' ? { ...state, voice: 'transcribing', voiceRequestId: action.request_id } : state;
     case 'voice.failed':
       return voiceFailed(state, action.code);
+    case 'voice.cancelled':
+      return state.voice === 'starting' || state.voice === 'recording' ? { ...state, voice: 'idle', voiceError: null, voiceNotice: 'cancelled', voiceRequestId: null } : state;
+    case 'voice.permission_granted':
+      return state.voice === 'idle' && state.voiceError === 'permission' ? { ...state, voiceError: null, voiceNotice: 'permission_granted' } : state;
     default:
       return state;
   }
@@ -227,12 +241,33 @@ export function activeRequest(state: PanelState): RequestItem | undefined {
   return state.queue[0];
 }
 
-export function micDisabled(state: PanelState): boolean {
-  return isDisconnected(state) || state.voice === 'starting' || state.voice === 'transcribing';
+// Dictation always lands in the main text box, so it must not start while a question card is waiting for its own answer.
+export function micBlockedByRequest(state: PanelState): boolean {
+  return state.voice === 'idle' && !isDisconnected(state) && activeRequest(state) !== undefined;
 }
 
-export function micLabelKey(state: PanelState): 'voiceStart' | 'voiceFinish' {
-  return state.voice === 'recording' ? 'voiceFinish' : 'voiceStart';
+export function micDisabled(state: PanelState): boolean {
+  return isDisconnected(state) || state.voice === 'starting' || state.voice === 'transcribing' || micBlockedByRequest(state);
+}
+
+export function micLabelKey(state: PanelState): 'voiceStart' | 'voiceFinish' | 'voiceWait' {
+  switch (state.voice) {
+    case 'recording':
+      return 'voiceFinish';
+    case 'starting':
+    case 'transcribing':
+      return 'voiceWait';
+    default:
+      return 'voiceStart';
+  }
+}
+
+export function showCancel(state: PanelState): boolean {
+  return state.voice === 'starting' || state.voice === 'recording';
+}
+
+export function voiceNoticeKey(notice: VoiceNotice): string {
+  return VOICE_NOTICE_KEYS[notice];
 }
 
 export function voiceStatusKey(state: PanelState): string | null {

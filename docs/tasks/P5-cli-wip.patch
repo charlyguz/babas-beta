@@ -1,0 +1,1511 @@
+diff --git a/babas/__main__.py b/babas/__main__.py
+index 2f2d7ff..46b1ad1 100644
+--- a/babas/__main__.py
++++ b/babas/__main__.py
+@@ -66,7 +66,7 @@ def run_pair(settings: Settings, reset: bool) -> None:
+             say(f"Pairing file exists: {path}", "green")
+             say("The token is never shown. Use --reset to forget it.", "dim")
+         else:
+-            say(f"No pairing file: {path}", "yellow")
++            say(f"No pairing file: {path}", "magenta")
+             say("The extension pairs itself the first time it connects to 'python -m babas serve'.", "dim")
+         return
+     try:
+@@ -77,7 +77,7 @@ def run_pair(settings: Settings, reset: bool) -> None:
+     if removed:
+         say("Pairing removed. The extension will pair again the next time it connects.", "green")
+     else:
+-        say("No pairing file.", "yellow")
++        say("No pairing file.", "magenta")
+ 
+ 
+ def run_mcp(settings: Settings) -> None:
+@@ -130,6 +130,7 @@ def main(argv: Optional[List[str]] = None) -> None:
+         except KeyboardInterrupt:
+             ui.emit()
+             ui.emit(ui.step(ui.detect(sys.stdout), "info", "Bridge stopped"))
++            ui.exit_if_input_pending(0)
+         return
+     if args.command == "mcp":
+         run_mcp(settings)
+diff --git a/babas/channels.py b/babas/channels.py
+index 0659f8c..f4e49b2 100644
+--- a/babas/channels.py
++++ b/babas/channels.py
+@@ -1,7 +1,6 @@
+ import asyncio
+ import logging
+ import sys
+-import threading
+ from dataclasses import dataclass, field
+ from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol
+ 
+@@ -17,6 +16,10 @@ ALLOW_TIMEOUT_S = 300
+ UI_LOG_TIMEOUT_S = 10.0
+ VOICE_CONFIRM_TIMEOUT_S = 120
+ 
++CONFIRM_PROMPT = "¿Continuar? (s/N): "
++HANDOFF_PROMPT = "Presione Enter cuando termine"
++ALLOW_PROMPT = "¿Permitir que BABAS use {host}? (s/N): "
++
+ _YES = frozenset({"y", "yes", "s", "si", "sí"})
+ _LOG_KINDS = frozenset({"assistant", "step", "result", "error", "info"})
+ _ASK_KINDS = frozenset({"text", "handoff"})
+@@ -55,32 +58,11 @@ class _Bridge(Protocol):
+ 
+ 
+ async def _read_line(prompt: str) -> str:
+-    # A daemon thread, not asyncio.to_thread: a pool worker blocked in input() keeps the process alive after Ctrl+C.
+-    loop = asyncio.get_running_loop()
+-    future: "asyncio.Future[str]" = loop.create_future()
+-
+-    def deliver(line: Optional[str], error: Optional[Exception]) -> None:
+-        if future.done():
+-            return
+-        if error is not None:
+-            future.set_exception(error)
+-        else:
+-            future.set_result(line or "")
++    return await ui.ainput(prompt)
+ 
+-    def read() -> None:
+-        line: Optional[str] = None
+-        error: Optional[Exception] = None
+-        try:
+-            line = input(ui.for_input(prompt))
+-        except Exception as exc:
+-            error = exc
+-        try:
+-            loop.call_soon_threadsafe(deliver, line, error)
+-        except RuntimeError:
+-            pass
+ 
+-    threading.Thread(target=read, name="babas-console-input", daemon=True).start()
+-    return await future
++def safe_text(text: object) -> str:
++    return redact(ui.clean(text))
+ 
+ 
+ def _say(text: str = "") -> None:
+@@ -119,7 +101,7 @@ class ConsoleChannel:
+         return answer is True
+ 
+     async def confirm(self, req: ConfirmRequest) -> ConfirmResult:
+-        explanation = redact(req.explanation) if req.explanation else ""
++        explanation = safe_text(req.explanation) if req.explanation else ""
+         if self.voice_gui is not None:
+             text = "\n".join([title_es(req.reasons), *req.lines] + ([f"BABAS dice: {explanation}"] if explanation else []))
+             approved = await self._voice_yes(text)
+@@ -131,7 +113,7 @@ class ConsoleChannel:
+             body.extend(["", f"BABAS dice: {explanation}"] if body else [f"BABAS dice: {explanation}"])
+         _say()
+         _say(ui.card(term, title_es(req.reasons), body, kind="confirm"))
+-        answer = await self._prompt(ui.question(term, "Continue? (y/N): "))
++        answer = await self._prompt(ui.question(term, CONFIRM_PROMPT))
+         if answer is None:
+             return ConfirmResult(False, None, "no_ui")
+         if answer.strip().lower() in _YES:
+@@ -142,8 +124,8 @@ class ConsoleChannel:
+         term = self.term
+         handoff = kind == "handoff"
+         _say()
+-        _say(ui.card(term, "Necesito su ayuda" if handoff else "BABAS pregunta", [redact(question)], kind="handoff" if handoff else "question"))
+-        prompt = ui.question(term, f"Press Enter when you are done{term.glyph('ellipsis')} ") if handoff else ui.prompt(term)
++        _say(ui.card(term, "Necesito su ayuda" if handoff else "BABAS pregunta", [safe_text(question)], kind="handoff" if handoff else "question"))
++        prompt = ui.question(term, f"{HANDOFF_PROMPT}{term.glyph('ellipsis')} ") if handoff else ui.prompt(term)
+         answer = await self._prompt(prompt)
+         if answer is None:
+             return None
+@@ -153,15 +135,15 @@ class ConsoleChannel:
+ 
+     async def allow_site(self, host: str, url: str) -> bool:
+         if self.voice_gui is not None:
+-            return await self._voice_yes(redact(f"BABAS quiere usar el sitio {host}. ¿Permitir?"))
++            return await self._voice_yes(safe_text(f"BABAS quiere usar el sitio {host}. ¿Permitir?"))
+         term = self.term
+         _say()
+-        _say(ui.card(term, "Permiso para un sitio", [redact(f"BABAS quiere usar el sitio {host}.")], kind="warn"))
+-        answer = await self._prompt(ui.question(term, redact(f"Allow BABAS to use {host}? (y/N): ")))
++        _say(ui.card(term, "Permiso para un sitio", [safe_text(f"BABAS quiere usar el sitio {host}.")], kind="warn"))
++        answer = await self._prompt(ui.question(term, safe_text(ALLOW_PROMPT.format(host=host))))
+         return answer is not None and answer.strip().lower() in _YES
+ 
+     async def log(self, kind: str, text: str, ok: Optional[bool] = None) -> None:
+-        safe = redact(text)
++        safe = safe_text(text)
+         term = self.term
+         if kind == "assistant":
+             _say(ui.speech(term, safe))
+diff --git a/babas/cli.py b/babas/cli.py
+index f51c547..68d4475 100644
+--- a/babas/cli.py
++++ b/babas/cli.py
+@@ -5,7 +5,6 @@ import random
+ import shutil
+ import signal
+ import sys
+-import threading
+ import time
+ from datetime import datetime
+ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+@@ -14,7 +13,7 @@ from playwright.async_api import Page, Playwright, async_playwright
+ 
+ from babas import __version__, ui, voice
+ from babas.agent import Agent, RunResult
+-from babas.channels import ConsoleChannel
++from babas.channels import ConsoleChannel, safe_text
+ from babas.config import Settings
+ from babas.debug import cleanup_temp_dir, get_temp_debug_dir
+ from babas.drivers.playwright_driver import (
+@@ -27,7 +26,7 @@ from babas.drivers.playwright_driver import (
+ from babas.gate import SafeDriver
+ from babas.llm import make_llm
+ from babas.logs import setup_logging
+-from babas.safety import SafetyPolicy, redact
++from babas.safety import SafetyPolicy
+ 
+ log = logging.getLogger("babas.cli")
+ 
+@@ -51,9 +50,6 @@ HACKER_SUCCESS_PHRASES = [
+ ]
+ 
+ 
+-_input_pending = threading.Event()
+-_pending_read: Optional["asyncio.Future[str]"] = None
+-
+ STOP_POLL_S = 0.3
+ 
+ HELP_COMMANDS = [
+@@ -82,7 +78,7 @@ def _line(status: str, text: str, **kwargs: Any) -> None:
+ 
+ 
+ def _option(term: ui.Term, key: str, text: str) -> str:
+-    return f"    {term.paint(key, 'bold', 'bright_cyan')} {text}"
++    return f"    {term.paint(key, 'bold', 'bright_blue')} {text}"
+ 
+ 
+ def preflight_problem(settings: Settings) -> Optional[str]:
+@@ -94,66 +90,8 @@ def preflight_problem(settings: Settings) -> Optional[str]:
+     return None
+ 
+ 
+-def _start_read(prompt: str) -> "asyncio.Future[str]":
+-    # A daemon thread, not asyncio.to_thread: a pool worker blocked in input() keeps the process alive after Ctrl+C.
+-    loop = asyncio.get_running_loop()
+-    future: "asyncio.Future[str]" = loop.create_future()
+-
+-    def deliver(line: Optional[str], error: Optional[Exception]) -> None:
+-        if future.done():
+-            return
+-        if error is not None:
+-            future.set_exception(error)
+-        else:
+-            future.set_result(line or "")
+-
+-    def read() -> None:
+-        line: Optional[str] = None
+-        error: Optional[Exception] = None
+-        try:
+-            line = input(ui.for_input(prompt))
+-        except Exception as e:
+-            error = e
+-        finally:
+-            _input_pending.clear()
+-        try:
+-            loop.call_soon_threadsafe(deliver, line, error)
+-        except RuntimeError:
+-            pass
+-
+-    _input_pending.set()
+-    threading.Thread(target=read, name="babas-input", daemon=True).start()
+-    return future
+-
+-
+ async def _ainput(prompt: str = "") -> str:
+-    # A read abandoned by Ctrl+C is still blocked in input(); the next prompt must adopt it, or it would swallow the next line.
+-    global _pending_read
+-    pending = _pending_read
+-    if pending is None or pending.get_loop() is not asyncio.get_running_loop():
+-        pending = _pending_read = _start_read(prompt)
+-    elif not pending.done():
+-        sys.stdout.write(prompt)
+-        sys.stdout.flush()
+-    try:
+-        line = await asyncio.shield(pending)
+-    except asyncio.CancelledError:
+-        raise
+-    except Exception:
+-        if _pending_read is pending:
+-            _pending_read = None
+-        raise
+-    if _pending_read is pending:
+-        _pending_read = None
+-    return line
+-
+-
+-def _exit_if_input_pending() -> None:
+-    # A daemon thread still blocked in input() holds the C stdin lock, and the normal interpreter exit then deadlocks on it.
+-    if _input_pending.is_set():
+-        sys.stdout.flush()
+-        sys.stderr.flush()
+-        os._exit(130)
++    return await ui.ainput(prompt)
+ 
+ 
+ async def run_hacker_mode(page: Page, butler: Any = None) -> None:
+@@ -197,7 +135,7 @@ async def run_hacker_mode(page: Page, butler: Any = None) -> None:
+             butler.say(success_phrase)
+         await asyncio.sleep(2)
+     except Exception as e:
+-        say(f"   Error in hacker mode: {redact(str(e))}")
++        say(f"   Error in hacker mode: {safe_text(e)}")
+         if butler and butler.enabled:
+             butler.say("We've been detected sir. Aborting mission.")
+ 
+@@ -222,7 +160,7 @@ async def select_session_mode(playwright: Playwright) -> Tuple[str, dict, Any]:
+             _line("success", f"Connected! {len(pages)} tabs")
+             return "connect", {"port": port}, browser
+         except Exception as e:
+-            _line("failure", f"Error connecting: {redact(str(e))}")
++            _line("failure", f"Error connecting: {safe_text(e)}")
+     ui.emit()
+     ui.emit("  " + term.paint("Which browser to use?", "bold"))
+     if preferred:
+@@ -307,11 +245,8 @@ def _make_printer(voice_gui: Any, status: Optional[ui.Status] = None) -> Callabl
+             return
+         progress.update(total=len(steps), done=0)
+         relabel(f"Working on step 1/{len(steps)}")
+-        term = _term()
+-        lines = [f"Step {number}/{len(steps)}: {redact(str(summary))}" for number, summary in enumerate(steps, 1)]
+-        for line in lines:
+-            ui.emit(ui.step(term, "pending", line))
+         if voice_gui is not None:
++            lines = [f"Step {number}/{len(steps)}: {safe_text(summary)}" for number, summary in enumerate(steps, 1)]
+             voice_gui.show_message("Executing...\n(Press STOP to cancel)\n\n" + "\n".join(lines))
+ 
+     return on_event
+@@ -362,7 +297,7 @@ async def run_task(
+     )
+     if voice_gui is not None:
+         voice_gui.set_status("Executing...", "#ff9f43")
+-        voice_gui.show_message(f'Executing...\n(Press STOP to cancel)\n\n"{redact(text)[:50]}"')
++        voice_gui.show_message(f'Executing...\n(Press STOP to cancel)\n\n"{safe_text(text)[:50]}"')
+         voice_gui.start_execution()
+     if butler and butler.enabled:
+         butler.executing()
+@@ -396,7 +331,7 @@ async def run_task(
+             butler.say("Understood sir. Stopping execution.")
+         return None
+     result = task.result()
+-    answer = redact(result.answer)
++    answer = safe_text(result.answer)
+     summary = f"{result.steps} step{'' if result.steps == 1 else 's'} in {time.monotonic() - started:.1f} s"
+     ui.emit()
+     if result.status == "done":
+@@ -422,7 +357,7 @@ def render_help(term: ui.Term) -> str:
+     pointer = term.paint(term.glyph("pointer"), "dim")
+     parts = [
+         ui.rule(term, "Commands"),
+-        ui.table(term, ["Command", "What it does"], HELP_COMMANDS, styles=[("bold", "bright_cyan"), ()]),
++        ui.table(term, ["Command", "What it does"], HELP_COMMANDS, styles=[("bold",), ()], wrap_last=True),
+         "",
+         ui.rule(term, "Examples"),
+     ]
+@@ -431,7 +366,7 @@ def render_help(term: ui.Term) -> str:
+ 
+ 
+ def render_tabs(term: ui.Term, rows: List[List[str]]) -> str:
+-    return ui.table(term, ["", "Tab", "Title"], rows, styles=[("bright_cyan",), ("bold",), ()])
++    return ui.table(term, ["", "Tab", "Title"], rows, styles=[("bright_blue",), ("bold",), ()])
+ 
+ 
+ def show_help() -> None:
+@@ -446,13 +381,59 @@ def _browser_label(mode: str, config: Dict[str, Any]) -> str:
+     return "built-in Chromium (saved profile)" if mode == "saved" else "built-in Chromium (temporary)"
+ 
+ 
+-def _configure_voice(settings: Settings) -> None:
++def _configure_voice(settings: Settings) -> List[str]:
+     try:
+         import babas_listen
+ 
+         babas_listen.configure(settings)
++        return babas_listen.voice_problems(settings)
+     except Exception as exc:
+         log.debug("voice input is not configured: %s", type(exc).__name__)
++        return []
++
++
++BROWSER_PROBLEMS = (
++    (
++        ("executable doesn't exist", "playwright install"),
++        "The built-in browser is not installed.",
++        "Install it with: python -m playwright install chromium",
++    ),
++    (
++        ("xserver", "x server", "$display"),
++        "There is no screen to open a browser on (no graphical session).",
++        "Run BABAS from a desktop session.",
++    ),
++    (
++        ("singletonlock", "processsingleton", "in use by another"),
++        "The BABAS browser profile is already in use.",
++        "Close the other BABAS browser window and try again.",
++    ),
++)
++BROWSER_ALTERNATIVE = "Or use your own Chrome with the extension: python -m babas serve"
++BOX_CHARS = frozenset("╔╗╚╝═║ ")
++
++
++def _brief(exc: BaseException) -> str:
++    for line in ui.clean(str(exc)).split("\n"):
++        line = line.strip()
++        if line and not set(line) <= BOX_CHARS:
++            return safe_text(ui.truncate(line, 200))
++    return type(exc).__name__
++
++
++def _browser_problem(exc: BaseException) -> Tuple[str, str]:
++    text = str(exc).lower()
++    for markers, message, hint in BROWSER_PROBLEMS:
++        if any(marker in text for marker in markers):
++            return message, f"{hint}\n{BROWSER_ALTERNATIVE}"
++    return f"The browser did not start: {_brief(exc)}", BROWSER_ALTERNATIVE
++
++
++def _goodbye() -> None:
++    ui.emit()
++    _line("success", "Goodbye!")
++    cleanup_temp_dir()
++    voice.shutdown_butler()
+ 
+ 
+ async def amain(settings: Settings) -> None:
+@@ -475,7 +456,11 @@ async def amain(settings: Settings) -> None:
+     voice_gui = None
+     while True:
+         ui.emit()
+-        mode_choice = (await _ainput(ui.question(term, "Option (1/2) [1]: "))).strip() or "1"
++        try:
++            mode_choice = (await _ainput(ui.question(term, "Option (1/2) [1]: "))).strip() or "1"
++        except EOFError:
++            _goodbye()
++            return
+         if mode_choice == "1":
+             _line("success", "TEXT mode selected")
+             if butler and butler.enabled:
+@@ -485,8 +470,12 @@ async def amain(settings: Settings) -> None:
+             if voice.voice_gui_available():
+                 use_voice_mode = True
+                 voice_gui = voice.get_voice_gui()
+-                _configure_voice(settings)
++                notes = _configure_voice(settings)
+                 _line("success", "VOICE mode selected", detail="the control panel opens after connecting")
++                for note in notes:
++                    _line("warn", note)
++                if not (butler and butler.enabled):
++                    ui.emit(ui.muted(term, "    Spoken replies are off (optional): pip install elevenlabs pygame and set ELEVENLABS_API_KEY."))
+                 if butler and butler.enabled:
+                     butler.say("Voice mode activated sir. Opening control panel.")
+                 break
+@@ -497,6 +486,7 @@ async def amain(settings: Settings) -> None:
+         else:
+             _line("warn", "Please choose 1 or 2")
+     profile_path = None
++    started = False
+     try:
+         async with async_playwright() as p:
+             mode, config, browser = await select_session_mode(p)
+@@ -521,7 +511,8 @@ async def amain(settings: Settings) -> None:
+                     headless=False,
+                     args=['--disable-blink-features=AutomationControlled', '--start-maximized'],
+                     viewport=None,
+-                    no_viewport=True
++                    no_viewport=True,
++                    handle_sigint=False,
+                 )
+             if is_connected:
+                 _line("running", "Creating new tab for BABAS...")
+@@ -534,6 +525,7 @@ async def amain(settings: Settings) -> None:
+                     initial_page = await context.new_page()
+             driver = PlaywrightDriver(context, initial_page, attached=is_connected, browser=browser)
+             await driver.start()
++            started = True
+             policy = SafetyPolicy(settings.allowed_domains)
+             ui.emit()
+             ui.emit(ui.rule(term, "Ready"))
+@@ -575,13 +567,17 @@ async def amain(settings: Settings) -> None:
+                                 butler.goodbye()
+                             break
+                         ui.emit()
+-                        _line("info", f"Command: \"{redact(voice_command)}\"")
++                        _line("info", f"Command: \"{safe_text(voice_command)}\"")
+                         user_input = voice_command
+                         if butler and butler.enabled:
+-                            butler.say(f"Understood: {redact(voice_command)[:30]}")
++                            butler.say(f"Understood: {safe_text(voice_command)[:30]}")
+                     else:
+                         ui.emit()
+-                        user_input = (await _ainput(ui.prompt(term))).strip()
++                        try:
++                            user_input = (await _ainput(ui.prompt(term))).strip()
++                        except EOFError:
++                            ui.emit()
++                            user_input = "exit"
+                         if not user_input:
+                             continue
+                     cmd = user_input.lower()
+@@ -601,7 +597,7 @@ async def amain(settings: Settings) -> None:
+                             page = driver.get_tab_page(name)
+                             marker = term.glyph("pointer") if name == driver.current_tab else ""
+                             try:
+-                                title = redact(await page.title() or page.url)
++                                title = safe_text(await page.title() or page.url)
+                             except Exception:
+                                 title = "(error)"
+                             rows.append([marker, name, title])
+@@ -610,7 +606,7 @@ async def amain(settings: Settings) -> None:
+                         continue
+                     if cmd == "new":
+                         new_name = await driver.new_tab()
+-                        _line("success", f"New tab: '{new_name}'" if isinstance(new_name, str) else "New tab opened")
++                        _line("success", f"New tab: '{safe_text(new_name)}'" if isinstance(new_name, str) else "New tab opened")
+                         continue
+                     if cmd in ["screenshot", "ss"]:
+                         filename = f"screenshot_{datetime.now().strftime('%H%M%S')}.png"
+@@ -638,8 +634,8 @@ async def amain(settings: Settings) -> None:
+                         await run_task(driver, policy, user_input, gui, butler, settings=settings)
+                     except Exception as e:
+                         ui.emit()
+-                        ui.emit(ui.error_panel(term, redact(str(e))))
+-                        _gui_result(gui, "Error", "#ff4757", f"Error: {redact(str(e))}")
++                        ui.emit(ui.error_panel(term, safe_text(str(e) or type(e).__name__)))
++                        _gui_result(gui, "Error", "#ff4757", f"Error: {safe_text(e)}")
+                         continue
+                 except KeyboardInterrupt:
+                     ui.emit()
+@@ -663,12 +659,20 @@ async def amain(settings: Settings) -> None:
+                     pass
+             _line("success", "Session ended")
+             voice.shutdown_butler()
++    except EOFError:
++        _goodbye()
+     except Exception as e:
++        log.debug("fatal error", exc_info=True)
++        if started:
++            title, message, hint = "Unexpected error", _brief(e), "Run again with BABAS_LOG_LEVEL=debug to see the details."
++        else:
++            title = "Could not open the browser"
++            message, hint = _browser_problem(e)
+         ui.emit()
+-        ui.emit(ui.error_panel(term, redact(str(e)), title="Fatal error"))
++        ui.emit(ui.error_panel(term, message, title=title, hint=hint))
+         cleanup_temp_dir()
+         voice.shutdown_butler()
+-        raise
++        raise SystemExit(1) from None
+ 
+ 
+ def main(settings: Optional[Settings] = None) -> None:
+@@ -686,4 +690,4 @@ def main(settings: Optional[Settings] = None) -> None:
+         _line("warn", "Cancelled")
+         cleanup_temp_dir()
+         voice.shutdown_butler()
+-        _exit_if_input_pending()
++        ui.exit_if_input_pending()
+diff --git a/babas/debug.py b/babas/debug.py
+index dcd84f0..f2a09a9 100644
+--- a/babas/debug.py
++++ b/babas/debug.py
+@@ -19,7 +19,6 @@ def cleanup_temp_dir() -> None:
+     if TEMP_DEBUG_DIR and os.path.exists(TEMP_DEBUG_DIR):
+         try:
+             shutil.rmtree(TEMP_DEBUG_DIR, ignore_errors=True)
+-            print(f"   Temp files cleaned")
+         except Exception:
+             pass
+         TEMP_DEBUG_DIR = None
+diff --git a/babas/devrepl.py b/babas/devrepl.py
+index 785263f..dd87a3e 100644
+--- a/babas/devrepl.py
++++ b/babas/devrepl.py
+@@ -4,7 +4,6 @@ import json
+ import logging
+ import os
+ import sys
+-import threading
+ from datetime import datetime
+ from pathlib import Path
+ from types import ModuleType
+@@ -56,35 +55,11 @@ def _say(status: str, text: str) -> None:
+ 
+ 
+ def render_help(term: ui.Term) -> str:
+-    return ui.table(term, ["Command", "What it does"], HELP_COMMANDS, styles=[("bold", "bright_cyan"), ()])
++    return ui.table(term, ["Command", "What it does"], HELP_COMMANDS, styles=[("bold",), ()], wrap_last=True)
+ 
+ 
+ async def _ainput(prompt: str) -> str:
+-    loop = asyncio.get_running_loop()
+-    future: asyncio.Future = loop.create_future()
+-
+-    def deliver(value: Optional[str], error: Optional[Exception]) -> None:
+-        if future.done():
+-            return
+-        if error is not None:
+-            future.set_exception(error)
+-        else:
+-            future.set_result(value or "")
+-
+-    def worker() -> None:
+-        try:
+-            line = input(ui.for_input(prompt))
+-        except Exception as exc:
+-            outcome = (None, exc)
+-        else:
+-            outcome = (line, None)
+-        try:
+-            loop.call_soon_threadsafe(deliver, *outcome)
+-        except RuntimeError:
+-            pass
+-
+-    threading.Thread(target=worker, name="babas-input", daemon=True).start()
+-    return await future
++    return await ui.ainput(prompt)
+ 
+ 
+ def _one_line(text: str) -> str:
+@@ -97,10 +72,10 @@ def _escape_newlines(text: str) -> str:
+ 
+ def _format_element(el: Element, term: Optional[ui.Term] = None) -> str:
+     term = term if term is not None else ui.Term()
+-    line = f"{term.paint(f'[{el.index}]', 'bright_cyan')} {term.paint(_one_line(ui.clean(el.role)), 'dim')}"
++    line = f"{term.paint(f'[{el.index}]', 'bold', 'bright_blue')} {term.paint(_one_line(ui.clean(el.role)), 'dim')}"
+     line += f' "{redact(_one_line(ui.clean(el.label)))}"'
+     if el.flags:
+-        line += " " + term.paint("{" + ",".join(ui.clean(flag) for flag in el.flags) + "}", "yellow")
++        line += " " + term.paint("{" + ",".join(ui.clean(flag) for flag in el.flags) + "}", "magenta")
+     if el.value:
+         line += f" = {term.paint(redact(_escape_newlines(ui.clean(el.value))), 'green')}"
+     return line
+@@ -226,7 +201,7 @@ class _Session:
+         elif cmd == "tabs":
+             term = _term()
+             rows = [[term.glyph("pointer") if name == driver.current_tab else "", name] for name in driver.list_tabs()]
+-            ui.emit(ui.table(term, ["", "Tab"], rows, styles=[("bright_cyan",), ("bold",)]))
++            ui.emit(ui.table(term, ["", "Tab"], rows, styles=[("bright_blue",), ("bold",)]))
+         elif cmd == "new":
+             if len(args) > 1:
+                 return self._usage("new [URL]")
+@@ -393,7 +368,7 @@ async def run_serve(settings: Settings, repl: bool = False, mcp_http: bool = Fal
+             note = _key_note(settings)
+             if note:
+                 ui.emit()
+-                ui.emit(ui.note(term, note))
++                ui.emit(ui.step(term, "warn", note))
+             session = Session(
+                 bridge,
+                 lambda: make_llm(settings),
+diff --git a/babas/drivers/playwright_driver.py b/babas/drivers/playwright_driver.py
+index b8a1000..244ebf8 100644
+--- a/babas/drivers/playwright_driver.py
++++ b/babas/drivers/playwright_driver.py
+@@ -6,6 +6,7 @@ import platform
+ import re
+ import socket
+ import subprocess
++import sys
+ from contextlib import asynccontextmanager
+ from functools import wraps
+ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Literal, NamedTuple, Optional, Type, TypeVar, cast
+@@ -21,6 +22,7 @@ from playwright.async_api import (
+ )
+ from pydantic import BaseModel, ValidationError
+ 
++from babas import ui
+ from babas.drivers.base import (
+     FLAG_PASSWORD,
+     BrowserDriver,
+@@ -34,6 +36,10 @@ from babas.drivers.base import (
+ 
+ log = logging.getLogger("babas.playwright_driver")
+ 
++
++def _say(status: str, text: str) -> None:
++    ui.emit(ui.step(ui.detect(sys.stdout), status, text))
++
+ PAGE_SCRIPT = importlib.resources.files("babas.drivers").joinpath("page_script.js").read_text(encoding="utf-8")
+ 
+ DEBUG_PORTS = [9222, 9223, 9224, 9225]
+@@ -265,7 +271,7 @@ class PlaywrightDriver(BrowserDriver):
+         tab_name = name or f"tab_{self._tab_counter}"
+         page = await self.context.new_page()
+         self._tabs[tab_name] = page
+-        print(f"   New tab: '{tab_name}'")
++        log.debug("new tab: %s", tab_name)
+         self._current = tab_name
+         if url:
+             await self.goto(url)
+@@ -285,7 +291,7 @@ class PlaywrightDriver(BrowserDriver):
+             return False
+         await page.close()
+         del self._tabs[tab_name]
+-        print(f"   Tab closed: '{tab_name}'")
++        log.debug("tab closed: %s", tab_name)
+         if tab_name == self._current:
+             self._current = "main"
+         return True
+@@ -416,7 +422,7 @@ def launch_browser_with_debug(browser_name: str) -> tuple[bool, int, str]:
+     port = info.get("port", 9222)
+     system = platform.system().lower()
+     profile = get_babas_profile_path(browser_name)
+-    print(f"   BABAS profile: {os.path.basename(profile)}")
++    log.debug("BABAS profile: %s", os.path.basename(profile))
+     args = [
+         info["path"],
+         f"--remote-debugging-port={port}",
+@@ -435,12 +441,11 @@ def launch_browser_with_debug(browser_name: str) -> tuple[bool, int, str]:
+         return False, 0, str(e)
+ 
+ async def try_launch_and_connect(playwright: Playwright, browser_name: str) -> tuple[bool, Any, int]:
+-    print(f"\nLaunching {browser_name.capitalize()}...")
++    _say("running", f"Launching {browser_name.capitalize()}...")
+     success, port, msg = launch_browser_with_debug(browser_name)
+     if not success:
+-        print(f"   Error: {msg}")
++        _say("failure", f"Error: {msg}")
+         return False, None, 0
+-    print(f"   Connecting...")
+     for i in range(30):
+         await asyncio.sleep(0.5)
+         if check_port(port):
+@@ -449,9 +454,9 @@ async def try_launch_and_connect(playwright: Playwright, browser_name: str) -> t
+                 browser = await playwright.chromium.connect_over_cdp(f"http://localhost:{port}")
+                 contexts = browser.contexts
+                 pages_count = len(contexts[0].pages) if contexts else 0
+-                print(f"   Connected! ({pages_count} tabs)")
++                _say("success", f"Connected! {pages_count} tabs")
+                 return True, browser, port
+             except Exception:
+                 continue
+-    print("   Could not connect")
++    _say("failure", "Could not connect")
+     return False, None, 0
+diff --git a/babas/logs.py b/babas/logs.py
+index 29ab4f5..658e1dd 100644
+--- a/babas/logs.py
++++ b/babas/logs.py
+@@ -1,11 +1,25 @@
+ import logging
+ import sys
+-from typing import Union
++from typing import Any, Dict, Tuple, Union
+ 
++from babas import ui
+ from babas.safety import redact
+ 
+ _HANDLER_MARK = "_babas_handler"
+ _FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
++_DATE_FORMAT = "%H:%M:%S"
++_LEVEL_STYLES: Dict[int, Tuple[str, ...]] = {
++    logging.DEBUG: ("dim",),
++    logging.INFO: ("bright_blue",),
++    logging.WARNING: ("bold", "magenta"),
++    logging.ERROR: ("bold", "red"),
++    logging.CRITICAL: ("bold", "red"),
++}
++
++
++def scrub(text: Any) -> str:
++    # Control characters go first: left inside a value they would stop redact() from recognising it.
++    return redact(ui.clean(text, keep_tabs=True))
+ 
+ 
+ class RedactingFilter(logging.Filter):
+@@ -14,17 +28,50 @@ class RedactingFilter(logging.Filter):
+             message = record.getMessage()
+         except Exception:
+             message = str(record.msg)
+-        record.msg = redact(message)
++        record.msg = scrub(message)
+         record.args = ()
+         if record.exc_info and not record.exc_text:
+             record.exc_text = logging.Formatter().formatException(record.exc_info)
+         if record.exc_text:
+-            record.exc_text = redact(record.exc_text)
++            record.exc_text = scrub(record.exc_text)
+         if record.stack_info:
+-            record.stack_info = redact(record.stack_info)
++            record.stack_info = scrub(record.stack_info)
+         return True
+ 
+ 
++class PrettyFormatter(logging.Formatter):
++    def __init__(self, term: ui.Term) -> None:
++        super().__init__(datefmt=_DATE_FORMAT)
++        self.term = term
++
++    def format(self, record: logging.LogRecord) -> str:
++        record.message = record.getMessage()
++        stamp = self.formatTime(record, self.datefmt)
++        styles = _LEVEL_STYLES.get(record.levelno, ())
++        name = record.name[len("babas.") :] if record.name.startswith("babas.") else record.name
++        paint = self.term.paint
++        head = f"{paint(stamp, 'dim')} {paint(f'{record.levelname:<7}', *styles)} {paint(name, 'dim')}"
++        text = record.message
++        if record.exc_info and not record.exc_text:
++            record.exc_text = self.formatException(record.exc_info)
++        if record.exc_text:
++            text = f"{text}\n{record.exc_text}"
++        if record.stack_info:
++            text = f"{text}\n{self.formatStack(record.stack_info)}"
++        first, *rest = text.split("\n")
++        return "\n".join([f"{head}  {first}", *(f"    {paint(line, 'dim')}" for line in rest)])
++
++
++class ConsoleHandler(logging.StreamHandler):
++    def format(self, record: logging.LogRecord) -> str:
++        return ui.printable(super().format(record), self.stream)
++
++    def emit(self, record: logging.LogRecord) -> None:
++        # A running indicator is wiped and redrawn around the line, so the log never lands in the middle of it.
++        with ui.suspended():
++            super().emit(record)
++
++
+ def _level_number(level: Union[str, int]) -> int:
+     if isinstance(level, int):
+         return level
+@@ -38,9 +85,13 @@ def setup_logging(level: Union[str, int] = "INFO") -> logging.Logger:
+         if getattr(handler, _HANDLER_MARK, False):
+             logger.removeHandler(handler)
+     # sys.stderr is read now, not at import: stdout is the protocol channel in MCP stdio mode.
+-    handler = logging.StreamHandler(sys.stderr)
++    stream = sys.stderr
++    handler = ConsoleHandler(stream)
+     setattr(handler, _HANDLER_MARK, True)
+-    handler.setFormatter(logging.Formatter(_FORMAT, datefmt="%H:%M:%S"))
++    if ui.is_tty(stream):
++        handler.setFormatter(PrettyFormatter(ui.detect(stream)))
++    else:
++        handler.setFormatter(logging.Formatter(_FORMAT, datefmt=_DATE_FORMAT))
+     handler.addFilter(RedactingFilter())
+     logger.addHandler(handler)
+     logger.setLevel(_level_number(level))
+diff --git a/babas/ui.py b/babas/ui.py
+index 1bdd8ad..22f618a 100644
+--- a/babas/ui.py
++++ b/babas/ui.py
+@@ -4,9 +4,11 @@ import contextlib
+ import os
+ import re
+ import sys
++import threading
+ import time
+ import unicodedata
+ from dataclasses import dataclass, replace
++from functools import lru_cache
+ from typing import Any, Callable, Iterator, List, Mapping, Optional, Sequence, TextIO, Tuple
+ 
+ MIN_WIDTH = 40
+@@ -25,11 +27,8 @@ _SGR = {
+     "dim": "2",
+     "red": "31",
+     "green": "32",
+-    "yellow": "33",
+     "magenta": "35",
+-    "cyan": "36",
+     "bright_blue": "94",
+-    "bright_cyan": "96",
+ }
+ 
+ _GLYPHS = {
+@@ -60,11 +59,11 @@ _SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
+ _SPINNER_ASCII = ("|", "/", "-", "\\")
+ 
+ _STEPS = {
+-    "running": ("run", ("cyan",)),
++    "running": ("run", ("bright_blue",)),
+     "success": ("ok", ("green",)),
+     "failure": ("fail", ("red",)),
+     "info": ("info", ("bright_blue",)),
+-    "warn": ("warn", ("yellow",)),
++    "warn": ("warn", ("magenta",)),
+     "pending": ("pending", ("dim",)),
+ }
+ 
+@@ -72,10 +71,10 @@ _CARDS = {
+     "info": ("info", ("bright_blue",)),
+     "success": ("ok", ("green",)),
+     "error": ("fail", ("red",)),
+-    "warn": ("warn", ("yellow",)),
+-    "confirm": ("warn", ("yellow",)),
+-    "question": ("ask", ("bright_cyan",)),
+-    "handoff": ("hand", ("magenta",)),
++    "warn": ("warn", ("magenta",)),
++    "confirm": ("warn", ("magenta",)),
++    "question": ("ask", ("bright_blue",)),
++    "handoff": ("hand", ("bright_blue",)),
+ }
+ 
+ _WORDMARK = {
+@@ -90,6 +89,7 @@ _WORDMARK = {
+ _ASCII_MAP = str.maketrans({"«": '"', "»": '"', "“": '"', "”": '"', "‘": "'", "’": "'", "—": "-", "–": "-", "…": "...", "¿": "?", "¡": "!"})
+ _ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[@-Z\\-_])")
+ _CONTROL_RE = re.compile("[\x00-\x09\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]")
++_CONTROL_KEEP_TAB_RE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]")
+ _SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
+ _BULLET_RE = re.compile(r"^(\s*)((?:[-•*·+]|\d{1,3}[.)])\s+)?")
+ _ZERO_WIDTH = frozenset("​‌‍‎‏⁠﻿︎️")
+@@ -111,7 +111,7 @@ class Term:
+         return _GLYPHS[name][0 if self.unicode else 1]
+ 
+ 
+-def _isatty(stream: Any) -> bool:
++def is_tty(stream: Any) -> bool:
+     try:
+         return bool(stream.isatty())
+     except Exception:
+@@ -144,7 +144,7 @@ def supports_color(stream: Optional[TextIO] = None, env: Optional[Mapping[str, s
+     platform = platform or sys.platform
+     if env.get("NO_COLOR"):
+         return False
+-    tty = _isatty(stream)
++    tty = is_tty(stream)
+     force = (env.get("FORCE_COLOR") or "").strip().lower()
+     if force:
+         if force in FALSY:
+@@ -188,7 +188,7 @@ def detect(stream: Optional[TextIO] = None, env: Optional[Mapping[str, str]] = N
+     stream = stream if stream is not None else sys.stdout
+     env = os.environ if env is None else env
+     platform = platform or sys.platform
+-    tty = _isatty(stream)
++    tty = is_tty(stream)
+     dumb = (env.get("TERM") or "").lower() == "dumb"
+     return Term(
+         color=supports_color(stream, env, platform),
+@@ -227,17 +227,19 @@ def strip_ansi(text: str) -> str:
+     return _ANSI_RE.sub("", text)
+ 
+ 
+-def clean(text: Any) -> str:
+-    value = text if isinstance(text, str) else str(text)
+-    value = _ANSI_RE.sub("", value).replace("\t", " ")
++def clean(text: Any, *, keep_tabs: bool = False) -> str:
++    value = _ANSI_RE.sub("", text if isinstance(text, str) else str(text))
++    if not keep_tabs:
++        value = value.replace("\t", " ")
+     value = value.replace("\r\n", "\n").replace("\r", "\n")
+-    return _CONTROL_RE.sub("", value)
++    return (_CONTROL_KEEP_TAB_RE if keep_tabs else _CONTROL_RE).sub("", value)
+ 
+ 
+ def _one_line(text: Any) -> str:
+     return " ".join(clean(text).split())
+ 
+ 
++@lru_cache(maxsize=4096)
+ def char_width(ch: str) -> int:
+     if ch in _ZERO_WIDTH:
+         return 0
+@@ -250,7 +252,11 @@ def char_width(ch: str) -> int:
+ 
+ 
+ def display_width(text: str) -> int:
+-    return sum(char_width(ch) for ch in strip_ansi(text))
++    if "\x1b" in text:
++        text = strip_ansi(text)
++    if text.isascii() and text.isprintable():
++        return len(text)
++    return sum(map(char_width, text))
+ 
+ 
+ def _take(text: str, width: int) -> Tuple[str, str]:
+@@ -278,6 +284,23 @@ def pad(text: str, width: int) -> str:
+     return text + " " * max(0, width - display_width(text))
+ 
+ 
++def _split_word(word: str, first: int, rest: int) -> List[str]:
++    if word.isascii() and word.isprintable():
++        pieces = [word[:first]]
++        pieces.extend(word[start : start + rest] for start in range(first, len(word), rest))
++        return pieces
++    pieces = []
++    room, used, start = first, 0, 0
++    for position, ch in enumerate(word):
++        cols = char_width(ch)
++        if used + cols > room and position > start:
++            pieces.append(word[start:position])
++            room, used, start = rest, 0, position
++        used += cols
++    pieces.append(word[start:])
++    return pieces
++
++
+ def wrap(text: Any, width: int, *, indent: str = "", hanging: Optional[str] = None) -> List[str]:
+     rest_indent = indent if hanging is None else hanging
+     lines: List[str] = []
+@@ -291,6 +314,7 @@ def wrap(text: Any, width: int, *, indent: str = "", hanging: Optional[str] = No
+         words = paragraph[found.end() if found else 0 :].split()
+         first = indent + lead + bullet
+         later = rest_indent + lead + " " * display_width(bullet)
++        later_width = display_width(later)
+         current = first
+         used = display_width(current)
+         has_word = False
+@@ -303,13 +327,15 @@ def wrap(text: Any, width: int, *, indent: str = "", hanging: Optional[str] = No
+                 continue
+             if has_word:
+                 lines.append(current)
+-                current, used, has_word = later, display_width(later), False
+-            while display_width(word) > max(1, width - used):
+-                head, word = _take(word, max(1, width - used))
+-                lines.append(current + head)
+-                current, used = later, display_width(later)
++                current, used, has_word = later, later_width, False
++            if size > max(1, width - used):
++                *full, word = _split_word(word, max(1, width - used), max(1, width - later_width))
++                for piece in full:
++                    lines.append(current + piece)
++                    current, used = later, later_width
++                size = display_width(word)
+             current += word
+-            used += display_width(word)
++            used += size
+             has_word = True
+         lines.append(current if has_word else current.rstrip())
+     return lines
+@@ -330,12 +356,12 @@ def rule(term: Term, title: str = "", *, width: Optional[int] = None) -> str:
+ 
+ 
+ def prompt(term: Term, label: str = "") -> str:
+-    chevron = term.paint(term.glyph("prompt"), "bold", "bright_cyan")
++    chevron = term.paint(term.glyph("prompt"), "bold", "bright_blue")
+     return f"{term.paint(_one_line(label), 'dim')} {chevron} " if label else f"{chevron} "
+ 
+ 
+ def question(term: Term, text: str) -> str:
+-    return f"{term.paint(term.glyph('prompt'), 'bold', 'bright_cyan')} {term.paint(clean(text), 'bold')}"
++    return f"{term.paint(term.glyph('prompt'), 'bold', 'bright_blue')} {term.paint(clean(text), 'bold')}"
+ 
+ 
+ def for_input(text: str) -> str:
+@@ -363,21 +389,26 @@ def step(
+     glyph, styles = _STEPS[status]
+     icon = term.paint(term.glyph(glyph), *styles)
+     pad_left = " " * indent
++    span = _span(term, width)
+     if wrap_text:
+-        lines = wrap(text, max(8, _span(term, width) - indent - 2))
++        plain = wrap(text, max(8, span - indent - 2))
+     else:
+-        lines = clean(text).split("\n")
++        plain = clean(text).split("\n")
++    plain = plain or [""]
+     body = ("dim",) if status == "pending" else ()
+-    lines = [term.paint(line, *body) for line in lines] or [""]
++    lines = [term.paint(line, *body) for line in plain]
+     out = [f"{pad_left}{icon} {lines[0]}"] + [f"{pad_left}  {line}" for line in lines[1:]]
+-    if detail:
+-        out[-1] += "  " + term.paint(_one_line(detail), "dim")
++    note = _one_line(detail) if detail else ""
++    if note and indent + 2 + display_width(plain[-1]) + 2 + display_width(note) <= span:
++        out[-1] += "  " + term.paint(note, "dim")
++    elif note:
++        out.extend(f"{pad_left}  {term.paint(line, 'dim')}" for line in wrap(note, max(8, span - indent - 2)))
+     return "\n".join(out)
+ 
+ 
+ def speech(term: Term, text: Any, *, name: str = "BABAS", indent: int = 2, width: Optional[int] = None) -> str:
+-    icon = term.paint(term.glyph("bot"), "bright_cyan")
+-    label = term.paint(f"{name}:", "bold", "bright_cyan")
++    icon = term.paint(term.glyph("bot"), "bright_blue")
++    label = term.paint(f"{name}:", "bold")
+     lead = display_width(f"{name}: ") + 2
+     lines = wrap(text, max(8, _span(term, width) - indent - lead)) or [""]
+     pad_left = " " * indent
+@@ -386,22 +417,20 @@ def speech(term: Term, text: Any, *, name: str = "BABAS", indent: int = 2, width
+     return "\n".join(out)
+ 
+ 
+-def note(term: Term, text: str) -> str:
+-    body = clean(text)
+-    if body.startswith("Note:"):
+-        return term.paint("Note:", "bold", "yellow") + body[len("Note:") :]
+-    return body
+-
+-
+ def info_row(term: Term, pairs: Sequence[Tuple[str, str]], *, indent: int = 2, width: Optional[int] = None) -> str:
+     separator = f" {term.glyph('dot')} "
+     room = _span(term, width) - indent
++    ellipsis = term.glyph("ellipsis")
+     lines: List[str] = []
+     plain = ""
+     painted = ""
+-    for label, value in pairs:
+-        text = f"{_one_line(label)} {_one_line(value)}"
+-        shown = f"{term.paint(_one_line(label), 'dim')} {term.paint(_one_line(value), 'bold')}"
++    for raw_label, raw_value in pairs:
++        label, value = _one_line(raw_label), _one_line(raw_value)
++        if display_width(label) + 1 + display_width(value) > room:
++            label = truncate(label, max(room - 5, 1), ellipsis)
++            value = truncate(value, max(room - display_width(label) - 1, 1), ellipsis)
++        text = f"{label} {value}"
++        shown = f"{term.paint(label, 'dim')} {term.paint(value, 'bold')}"
+         if plain and display_width(plain) + display_width(separator) + display_width(text) > room:
+             lines.append(painted)
+             plain = painted = ""
+@@ -438,10 +467,10 @@ def banner(
+     pad_left = " " * indent
+     out: List[str] = []
+     if side_by_side:
+-        out.append(f"{pad_left}{term.paint(pad(mark[0], mark_width), 'bold', 'bright_cyan')}   {term.paint(tagline, 'bold')}")
+-        out.append(f"{pad_left}{term.paint(pad(mark[1], mark_width), 'bold', 'bright_cyan')}   {term.paint(second, 'dim')}")
++        out.append(f"{pad_left}{term.paint(pad(mark[0], mark_width), 'bold', 'bright_blue')}   {term.paint(tagline, 'bold')}")
++        out.append(f"{pad_left}{term.paint(pad(mark[1], mark_width), 'bold', 'bright_blue')}   {term.paint(second, 'dim')}")
+     else:
+-        out.extend(f"{pad_left}{term.paint(row, 'bold', 'bright_cyan')}" for row in mark)
++        out.extend(f"{pad_left}{term.paint(row, 'bold', 'bright_blue')}" for row in mark)
+         out.append("")
+         room = max(8, _span(term) - indent)
+         out.extend(f"{pad_left}{term.paint(line, 'bold')}" for line in wrap(tagline, room))
+@@ -467,11 +496,15 @@ def card(
+     inner = total - 4
+     v = term.paint(term.glyph("v"), *styles)
+     dash = term.glyph("h")
+-    head = f" {term.glyph(glyph)} {truncate(title, inner - 4, term.glyph('ellipsis'))} "
+-    fill = max(1, total - 3 - display_width(head))
++    shown = truncate(title, inner - 4, term.glyph("ellipsis"))
++    fill = max(1, total - 3 - display_width(f" {term.glyph(glyph)} {shown} "))
+     top = (
+         term.paint(term.glyph("tl") + dash, *styles)
+-        + term.paint(head, "bold", *styles)
++        + " "
++        + term.paint(term.glyph(glyph), "bold", *styles)
++        + " "
++        + term.paint(shown, "bold")
++        + " "
+         + term.paint(dash * fill + term.glyph("tr"), *styles)
+     )
+     rows: List[str] = []
+@@ -493,6 +526,24 @@ def error_panel(term: Term, message: str, *, title: str = "Error", hint: str = "
+     return card(term, title, lines, kind="error", width=width)
+ 
+ 
++def _shrink(sizes: List[int], room: int, floor: int) -> List[int]:
++    sizes = list(sizes)
++    excess = sum(sizes) - room
++    while excess > 0 and max(sizes) > floor:
++        top = max(sizes)
++        widest = [i for i, size in enumerate(sizes) if size == top]
++        below = max([size for size in sizes if size < top] + [floor])
++        cut = min(top - below, excess // len(widest))
++        if cut == 0:
++            for i in widest[: excess]:
++                sizes[i] -= 1
++            break
++        for i in widest:
++            sizes[i] -= cut
++        excess -= cut * len(widest)
++    return sizes
++
++
+ def table(
+     term: Term,
+     headers: Sequence[str],
+@@ -502,6 +553,7 @@ def table(
+     gap: int = 2,
+     width: Optional[int] = None,
+     styles: Sequence[Sequence[str]] = (),
++    wrap_last: bool = False,
+ ) -> str:
+     count = len(headers)
+     heads = [_one_line(header) for header in headers]
+@@ -509,8 +561,12 @@ def table(
+     sizes = [max([display_width(heads[i])] + [display_width(row[i]) for row in body]) for i in range(count)]
+     room = _span(term, width) - indent - gap * (count - 1)
+     floor = 6
+-    while sum(sizes) > room and max(sizes) > floor:
+-        sizes[sizes.index(max(sizes))] -= 1
++    if wrap_last and count > 1:
++        keep = min(sizes[-1], 24)
++        sizes[:-1] = _shrink(sizes[:-1], room - keep, floor)
++        sizes[-1] = max(min(sizes[-1], room - sum(sizes[:-1])), floor)
++    else:
++        sizes = _shrink(sizes, room, floor)
+     ellipsis = term.glyph("ellipsis")
+     dash = term.glyph("h")
+ 
+@@ -522,9 +578,17 @@ def table(
+             parts.append(styled + " " * (sizes[i] - display_width(shown)))
+         return (" " * indent + (" " * gap).join(parts)).rstrip()
+ 
++    def lines_of(cells: Sequence[str]) -> List[str]:
++        if not wrap_last or count < 2:
++            return [line(cells)]
++        tail = wrap(cells[-1], sizes[-1]) or [""]
++        first = list(cells[:-1]) + [tail[0]]
++        return [line(first)] + [line([""] * (count - 1) + [more]) for more in tail[1:]]
++
+     out = [line(heads, ("bold",))]
+     out.append(" " * indent + term.paint((" " * gap).join(dash * size for size in sizes), "dim"))
+-    out.extend(line(row) for row in body)
++    for row in body:
++        out.extend(lines_of(row))
+     return "\n".join(out)
+ 
+ 
+@@ -550,6 +614,75 @@ def suspended() -> Iterator[None]:
+             yield
+ 
+ 
++_input_pending = threading.Event()
++_pending_read: Optional["asyncio.Future[str]"] = None
++
++
++def _start_read(prompt: str) -> "asyncio.Future[str]":
++    # A daemon thread, not asyncio.to_thread: a pool worker blocked in input() keeps the process alive after Ctrl+C.
++    loop = asyncio.get_running_loop()
++    future: "asyncio.Future[str]" = loop.create_future()
++
++    def deliver(line: Optional[str], error: Optional[Exception]) -> None:
++        if future.done():
++            return
++        if error is not None:
++            future.set_exception(error)
++        else:
++            future.set_result(line or "")
++
++    def read() -> None:
++        line: Optional[str] = None
++        error: Optional[Exception] = None
++        try:
++            line = input(for_input(prompt))
++        except Exception as exc:
++            error = exc
++        finally:
++            _input_pending.clear()
++        try:
++            loop.call_soon_threadsafe(deliver, line, error)
++        except RuntimeError:
++            pass
++
++    _input_pending.set()
++    threading.Thread(target=read, name="babas-input", daemon=True).start()
++    return future
++
++
++async def ainput(prompt: str = "") -> str:
++    # A read abandoned by Ctrl+C is still blocked in input(); the next prompt must adopt it, or it would swallow the next line.
++    global _pending_read
++    pending = _pending_read
++    if pending is None or pending.get_loop() is not asyncio.get_running_loop():
++        pending = _pending_read = _start_read(prompt)
++    elif not pending.done():
++        sys.stdout.write(prompt)
++        sys.stdout.flush()
++    try:
++        line = await asyncio.shield(pending)
++    except asyncio.CancelledError:
++        raise
++    except Exception:
++        if _pending_read is pending:
++            _pending_read = None
++        raise
++    if _pending_read is pending:
++        _pending_read = None
++    return line
++
++
++def exit_if_input_pending(code: int = 130) -> None:
++    # A daemon thread still blocked in input() holds the C stdin lock, and the normal interpreter exit then deadlocks on it.
++    if _input_pending.is_set():
++        for stream in (sys.stdout, sys.stderr):
++            try:
++                stream.flush()
++            except Exception:
++                pass
++        os._exit(code)
++
++
+ class Status:
+     def __init__(
+         self,
+@@ -620,7 +753,7 @@ class Status:
+ 
+     def frame(self) -> str:
+         glyphs = _SPINNER if self.term.unicode else _SPINNER_ASCII
+-        mark = self.term.paint(glyphs[self._tick % len(glyphs)], "cyan")
++        mark = self.term.paint(glyphs[self._tick % len(glyphs)], "bright_blue")
+         ellipsis = self.term.glyph("ellipsis")
+         elapsed = int(self._clock() - self._started) if self._task is not None else 0
+         text = f"{_one_line(self.label)}{ellipsis}" + (f" {elapsed}s" if elapsed >= 2 else "")
+@@ -695,12 +828,12 @@ def _demo_lines(term: Term) -> List[str]:
+     add(error_panel(term, "No pude completar la tarea. Puede intentarlo de nuevo o pedirlo de otra manera.", hint="Escriba «ayuda» para ver los comandos."))
+     add("")
+     add(rule(term, "Tables"))
+-    add(table(term, ["", "Tab", "Title"], [[term.glyph("pointer"), "main", "Google"], ["", "correo", "Bandeja de entrada (3) - Gmail"], ["", "sat", "Servicio de Administración Tributaria 日本語"]], styles=[("cyan",), ("bold",), ()]))
++    add(table(term, ["", "Tab", "Title"], [[term.glyph("pointer"), "main", "Google"], ["", "correo", "Bandeja de entrada (3) - Gmail"], ["", "sat", "Servicio de Administración Tributaria 日本語"]], styles=[("bright_blue",), ("bold",), ()]))
+     add("")
+-    add(table(term, ["Command", "What it does"], [["exit, quit, q", "Close the program"], ["help, ?", "Show this help"], ["tabs", "Show the open tabs"]], styles=[("bold", "bright_cyan"), ()]))
++    add(table(term, ["Command", "What it does"], [["exit, quit, q", "Close the program"], ["help, ?", "Show this help"], ["tabs", "Show the open tabs"], ["press KEY [N]", "press a key (Enter, Tab, Escape, ...), optionally on element N"]], styles=[("bold",), ()], wrap_last=True))
+     add("")
+     add(rule(term))
+-    add(question(term, "Continue? (y/N): ").rstrip())
++    add(question(term, "¿Continuar? (s/N): ").rstrip())
+     add(prompt(term).rstrip() + " open youtube and search lofi music")
+     return out
+ 
+@@ -708,15 +841,15 @@ def _demo_lines(term: Term) -> List[str]:
+ def demo(term: Term, *, stream: Optional[TextIO] = None) -> None:
+     out = stream if stream is not None else sys.stdout
+     for text in _demo_lines(term):
+-        print(text, file=out)
+-    print("", file=out)
+-    print(rule(term, "Thinking indicator"), file=out)
++        emit(text, stream=out)
++    emit(stream=out)
++    emit(rule(term, "Thinking indicator"), stream=out)
+     if term.interactive:
+         asyncio.run(_demo_status(term))
+     else:
+-        print("  " + Status(term, "Thinking", hint="Ctrl+C to stop").frame(), file=out)
++        emit("  " + Status(term, "Thinking", hint="Ctrl+C to stop").frame(), stream=out)
+         note_lines = wrap("(shown only in a terminal: one line that disappears when the work ends)", _span(term) - 2)
+-        print("\n".join("  " + muted(term, line) for line in note_lines), file=out)
++        emit("\n".join("  " + muted(term, line) for line in note_lines), stream=out)
+     out.flush()
+ 
+ 
+diff --git a/babas_gui.py b/babas_gui.py
+index 1a0f5a6..8ced715 100644
+--- a/babas_gui.py
++++ b/babas_gui.py
+@@ -28,6 +28,7 @@ class BabasControlPanel(ctk.CTkToplevel):
+         self.is_recording = False
+         self.recorder = None
+         self.transcriber = None
++        self.mic_problem = None
+         self.audio_data = None
+         self._pulse_job = None
+         self.waiting_confirmation = False
+@@ -57,6 +58,8 @@ class BabasControlPanel(ctk.CTkToplevel):
+             if listener.is_available():
+                 self.recorder = listener.recorder
+                 self.transcriber = listener.transcriber
++            else:
++                self.mic_problem = listener.problem
+         except Exception as e:
+             print(f"[!] Error initializing audio: {e}")
+ 
+@@ -126,7 +129,7 @@ class BabasControlPanel(ctk.CTkToplevel):
+ 
+     def _toggle_recording(self):
+         if not self.recorder:
+-            self.mic_status.configure(text="Microphone not available", text_color=Colors.RED)
++            self.mic_status.configure(text=self.mic_problem or "Microphone not available", text_color=Colors.RED)
+             return
+         if not self.is_recording:
+             self._start_recording()
+diff --git a/babas_listen.py b/babas_listen.py
+index 9e4d01d..d4bcd5a 100644
+--- a/babas_listen.py
++++ b/babas_listen.py
+@@ -7,21 +7,26 @@ import sys
+ import threading
+ import wave
+ from dataclasses import replace
+-from typing import Any, Awaitable, Callable, Optional, Union
++from typing import Any, Awaitable, Callable, List, Optional, Union
+ 
+ from dotenv import load_dotenv
+ 
+ from babas import ui
++from babas.safety import redact
+ 
+ load_dotenv()
+ 
+ try:
+     import sounddevice as sd
++except (ImportError, OSError):
++    sd = None
++
++try:
+     import numpy as np
+-    SOUNDDEVICE_AVAILABLE = True
+ except ImportError:
+-    SOUNDDEVICE_AVAILABLE = False
+-    print("sounddevice not installed. Run: pip install sounddevice numpy")
++    np = None
++
++SOUNDDEVICE_AVAILABLE = sd is not None and np is not None
+ 
+ try:
+     import keyboard
+@@ -38,6 +43,7 @@ MIN_DURATION = 0.5
+ TRANSCRIBE_TIMEOUT_S = 120
+ WAV_MIME = "audio/wav"
+ SOFT_ERROR_CODES = ("empty", "bad_audio")
++MIC_MISSING_TEXT = "The microphone libraries are missing. Run: pip install sounddevice numpy"
+ 
+ _default_settings: Any = None
+ 
+@@ -231,7 +237,7 @@ class AudioRecorder:
+         self.recording = False
+ 
+     def audio_to_wav_bytes(self, audio: np.ndarray) -> bytes:
+-        audio_int16 = (audio * 32767).astype(np.int16)
++        audio_int16 = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
+         buffer = io.BytesIO()
+         with wave.open(buffer, 'wb') as wav:
+             wav.setnchannels(CHANNELS)
+@@ -322,16 +328,21 @@ class VoiceTranscriber:
+             self._stt = make_stt(self._load_settings())
+         return self._stt
+ 
+-    def is_available(self) -> bool:
++    def unavailable_reason(self) -> Optional[str]:
+         if not SOUNDDEVICE_AVAILABLE:
+-            return False
++            return MIC_MISSING_TEXT
+         if self._stt is not None:
+-            return True
++            return None
+         try:
+-            import babas.stt  # noqa: F401
+-        except ImportError:
+-            return False
+-        return True
++            from babas.stt import stt_status
++
++            configured, reason = stt_status(self._load_settings())
++        except Exception as exc:
++            return _failure_text(exc)
++        return None if configured else reason or "No speech backend is configured."
++
++    def is_available(self) -> bool:
++        return self.unavailable_reason() is None
+ 
+     def _wav(self, audio: Union[bytes, "np.ndarray"]) -> bytes:
+         if isinstance(audio, (bytes, bytearray)):
+@@ -376,7 +387,8 @@ class VoiceListener:
+     def __init__(self, settings: Any = None):
+         self.recorder = AudioRecorder()
+         self.transcriber = VoiceTranscriber(settings=settings)
+-        self.enabled = self.transcriber.is_available()
++        self.problem = self.transcriber.unavailable_reason()
++        self.enabled = self.problem is None
+         self.listening = False
+         self.mode = self.MODE_ENTER
+         self.ptt_available = KEYBOARD_AVAILABLE
+@@ -407,13 +419,14 @@ class VoiceListener:
+         return self._transcribe(audio)
+ 
+     def _transcribe(self, audio: Any) -> Optional[str]:
+-        print("   Transcribing...")
++        term = ui.detect(sys.stdout)
++        ui.emit(ui.step(term, "running", "Transcribing..."))
+         text = self.transcriber.transcribe(audio)
+         if text:
+-            print(f"   \"{text}\"")
++            ui.emit(ui.step(term, "success", f'"{redact(ui.clean(text))}"'))
+             return text
+         if not self.transcriber.last_error:
+-            print("   Could not transcribe")
++            ui.emit(ui.step(term, "warn", "Could not transcribe"))
+         return None
+ 
+     def listen_push_to_talk(self, key: str = "space") -> Optional[str]:
+@@ -467,6 +480,8 @@ class VoiceInputMode:
+         if choice == "2":
+             if not self.enabled:
+                 print("\nVoice not available. Using text.")
++                if self.listener.problem:
++                    ui.emit(ui.step(ui.detect(sys.stdout), "warn", self.listener.problem))
+                 if butler:
+                     butler.say("I'm sorry sir, voice mode is not available. We'll use text.")
+                 return "text"
+@@ -539,6 +554,11 @@ class VoiceInputMode:
+             print(f"   Key '{key}' not recognized. Use SPACE, T or Q.")
+             return "", False
+ 
++def voice_problems(settings: Any = None) -> List[str]:
++    reason = VoiceTranscriber(settings=settings).unavailable_reason()
++    return [reason] if reason else []
++
++
+ _voice_input: Optional[VoiceInputMode] = None
+ 
+ def get_voice_input() -> VoiceInputMode:
+diff --git a/babas_voice.py b/babas_voice.py
+index aadbc34..a553cca 100644
+--- a/babas_voice.py
++++ b/babas_voice.py
+@@ -1,6 +1,7 @@
+ # preview beta V0.1 tested done formating done
+ import os
+ import io
++import logging
+ import random
+ import threading
+ import tempfile
+@@ -10,20 +11,21 @@ from dotenv import load_dotenv
+ 
+ load_dotenv()
+ 
++log = logging.getLogger("babas.butler")
++
+ try:
+     from elevenlabs import ElevenLabs
+     ELEVENLABS_AVAILABLE = True
+ except ImportError:
+     ELEVENLABS_AVAILABLE = False
+-    print("elevenlabs not installed. Run: pip install elevenlabs")
+ 
++os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+ try:
+     import pygame
+     pygame.mixer.init()
+     PYGAME_AVAILABLE = True
+-except ImportError:
++except Exception:
+     PYGAME_AVAILABLE = False
+-    print("pygame not installed. Run: pip install pygame")
+ 
+ class ButlerPhrases:
+     GREETINGS = [
+@@ -97,13 +99,12 @@ class VoiceEngine:
+         if self.api_key and ELEVENLABS_AVAILABLE:
+             try:
+                 self.client = ElevenLabs(api_key=self.api_key)
+-                print("Voice engine initialized")
++                log.debug("voice engine initialized")
+             except Exception as e:
+-                print(f"Error initializing voice: {e}")
++                log.warning("voice engine could not start: %s", type(e).__name__)
+                 self.client = None
+         else:
+-            if not self.api_key:
+-                print("To enable voice, add ELEVENLABS_API_KEY to your .env")
++            log.debug("spoken replies are off: ELEVENLABS_API_KEY or the elevenlabs package is missing")
+ 
+     def is_available(self) -> bool:
+         return self.client is not None and PYGAME_AVAILABLE
+@@ -150,7 +151,7 @@ class VoiceEngine:
+             while pygame.mixer.music.get_busy() and not self.stop_event.is_set():
+                 pygame.time.wait(100)
+         except Exception as e:
+-            print(f"Voice error: {e}")
++            log.warning("voice playback failed: %s", type(e).__name__)
+         finally:
+             self.speaking = False
+ 
+@@ -164,7 +165,7 @@ class VoiceEngine:
+             except Empty:
+                 continue
+             except Exception as e:
+-                print(f"Voice worker error: {e}")
++                log.warning("voice worker failed: %s", type(e).__name__)
+ 
+     def start(self):
+         if not self.is_available():

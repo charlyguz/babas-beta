@@ -59,7 +59,11 @@ body {
 }
 
 .intro {
-  margin: 0 0 24px;
+  margin: 0 0 14px;
+}
+
+.privacy {
+  margin-bottom: 24px;
 }
 
 .allow {

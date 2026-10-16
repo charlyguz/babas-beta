@@ -28,7 +28,10 @@ describe('classifyMicrophoneError', () => {
     expect(classifyMicrophoneError(refusal('SecurityError'))).toBe('denied');
     expect(classifyMicrophoneError(refusal('NotFoundError'))).toBe('no_device');
     expect(classifyMicrophoneError(refusal('OverconstrainedError'))).toBe('no_device');
-    expect(classifyMicrophoneError(refusal('NotReadableError'))).toBe('error');
+    expect(classifyMicrophoneError(refusal('NotReadableError'))).toBe('mic_busy');
+    expect(classifyMicrophoneError(refusal('TrackStartError'))).toBe('mic_busy');
+    expect(classifyMicrophoneError(refusal('AbortError'))).toBe('mic_busy');
+    expect(classifyMicrophoneError(refusal('SomethingElse'))).toBe('error');
     expect(classifyMicrophoneError('boom')).toBe('error');
     expect(classifyMicrophoneError(null)).toBe('error');
   });
@@ -46,7 +49,8 @@ describe('requestMicrophone', () => {
   it('reports a refusal, a missing device and other failures', async () => {
     expect(await requestMicrophone(async () => Promise.reject(refusal('NotAllowedError')))).toBe('denied');
     expect(await requestMicrophone(async () => Promise.reject(refusal('NotFoundError')))).toBe('no_device');
-    expect(await requestMicrophone(async () => Promise.reject(refusal('NotReadableError')))).toBe('error');
+    expect(await requestMicrophone(async () => Promise.reject(refusal('NotReadableError')))).toBe('mic_busy');
+    expect(await requestMicrophone(async () => Promise.reject(refusal('WeirdError')))).toBe('error');
     expect(
       await requestMicrophone(() => {
         throw new TypeError('no mediaDevices');
@@ -95,6 +99,17 @@ describe('the permission page', () => {
     expect(getUserMedia).not.toHaveBeenCalled();
   });
 
+  it('tells the person, before asking, that a voice service turns the recording into text and that it is not saved', () => {
+    mountPermissionPage(root(), { t, getUserMedia: vi.fn() });
+    const privacy = root().querySelector('[data-testid=privacy]');
+    expect(privacy?.textContent).toBe(t('micPermPrivacy'));
+    expect(privacy?.textContent).toContain('servicio de voz');
+    expect(privacy?.textContent).toContain('quien instaló BABAS');
+    expect(privacy?.textContent).toContain('texto');
+    expect(privacy?.textContent).toContain('no la guarda');
+    expect([...root().children].indexOf(privacy as Element)).toBeLessThan([...root().children].indexOf(button()));
+  });
+
   it('asks only when the button is pressed, shows a waiting hint, then the success text and hides the button', async () => {
     const { tracks, stream } = fakeStream();
     let release!: () => void;
@@ -108,7 +123,9 @@ describe('the permission page', () => {
     button().click();
     expect(getUserMedia).toHaveBeenCalledTimes(1);
     expect(button().disabled).toBe(true);
-    expect(result().textContent).toBe('Elija «Permitir» en la ventana que apareció cerca de la barra de direcciones.');
+    expect(result().textContent).toBe(t('micPermWaiting'));
+    expect(result().textContent).not.toContain('«Permitir»');
+    expect(result().textContent).toContain('barra de direcciones');
     button().click();
     expect(getUserMedia).toHaveBeenCalledTimes(1);
     release();
@@ -201,6 +218,19 @@ describe('the permission page', () => {
       vi.advanceTimersByTime(STUCK_PROMPT_MS * 2);
       expect(result().textContent).toBe(t('micPermDone'));
     });
+  });
+
+  it('says that another app may be using the microphone, like the panel does', async () => {
+    for (const name of ['NotReadableError', 'AbortError', 'TrackStartError']) {
+      document.body.innerHTML = '<main id="app"></main>';
+      mountPermissionPage(root(), { t, getUserMedia: async () => Promise.reject(refusal(name)) });
+      button().click();
+      await flush();
+      expect(result().textContent).toBe(t('micPermBusy'));
+      expect(result().textContent).toBe(catalog.voiceErrMicBusy?.message);
+      expect(result().classList.contains('problem')).toBe(true);
+      expect(button().disabled).toBe(false);
+    }
   });
 
   it('says when there is no microphone and when the browser cannot record at all', async () => {

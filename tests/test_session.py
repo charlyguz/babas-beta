@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import sys
+import threading
 import time
 import types
 from dataclasses import replace
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 import pytest
+from fake_openai_server import FakeOpenAIServer
 from helpers import EventBridge, FakeDriver, FakeLLM, FakeSTT, make_element, make_state
 from websockets.asyncio.client import ClientConnection, connect
 
@@ -34,8 +36,11 @@ from babas.stt import (
     NOT_CONFIGURED_TEXT,
     PROVIDER_TEXT,
     STT_BUSY_TEXT,
+    TIMEOUT_TEXT,
+    ChatAudioSTT,
     STTConfigError,
     STTError,
+    make_stt,
 )
 
 ORIGIN = f"chrome-extension://{PINNED_EXTENSION_ID}"
@@ -1405,6 +1410,125 @@ async def test_stop_cancels_a_running_transcription_without_answering_it() -> No
     session.stt_factory = lambda: fresh
     await bridge.fire("stt.transcribe", voice_payload(request_id="voice-b"))
     assert transcripts(bridge) == [{"request_id": "voice-b", "text": "otra"}]
+
+
+class CancelTrackingSTT(FakeSTT):
+    def __init__(self, *args: Any, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self.cancelled = 0
+
+    async def transcribe(self, audio: bytes, mime: str, language: str) -> str:
+        try:
+            return await super().transcribe(audio, mime, language)
+        except asyncio.CancelledError:
+            self.cancelled += 1
+            raise
+
+
+class ThreadBoundSTT:
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    async def transcribe(self, audio: bytes, mime: str, language: str) -> str:
+        def work() -> str:
+            self.entered.set()
+            self.release.wait(10)
+            return "tarde"
+
+        return await asyncio.to_thread(work)
+
+    async def close(self) -> None:
+        return None
+
+
+async def test_a_stuck_backend_gets_a_timeout_is_cancelled_and_frees_the_slot(caplog: pytest.LogCaptureFixture) -> None:
+    gate = asyncio.Event()
+    fake = CancelTrackingSTT("tarde", gate=gate)
+    bridge, session, _ = voice_rig(fake, stt_deadline=0.5)
+    first = asyncio.create_task(bridge.fire("stt.transcribe", voice_payload(request_id="voice-a")))
+    await asyncio.wait_for(fake.started.wait(), WAIT)
+    await bridge.fire("stt.transcribe", voice_payload(request_id="voice-b"))
+    assert [(item["request_id"], error_of(item)) for item in transcripts(bridge)] == [("voice-b", ("busy", STT_BUSY_TEXT))]
+
+    started = time.monotonic()
+    with caplog.at_level(logging.INFO, logger="babas"):
+        await asyncio.wait_for(first, WAIT)
+    assert time.monotonic() - started < 2
+    assert transcripts(bridge)[1]["request_id"] == "voice-a" and error_of(transcripts(bridge)[1]) == ("timeout", TIMEOUT_TEXT)
+    assert fake.cancelled == 1 and session._transcribing is None
+    assert [record.levelno for record in caplog.records if "timed out" in record.getMessage()] == [logging.WARNING]
+
+    gate.set()
+    await bridge.fire("stt.transcribe", voice_payload(request_id="voice-c"))
+    assert transcripts(bridge)[2] == {"request_id": "voice-c", "text": "tarde"}
+
+
+async def test_a_worker_thread_that_never_returns_cannot_keep_the_slot_busy() -> None:
+    stuck = ThreadBoundSTT()
+    bridge, session, _ = voice_rig(stuck, stt_deadline=0.3)
+    try:
+        started = time.monotonic()
+        await bridge.fire("stt.transcribe", voice_payload(request_id="voice-a"))
+        assert time.monotonic() - started < 3
+        assert stuck.entered.is_set() and not stuck.release.is_set()
+        assert error_of(transcripts(bridge)[0]) == ("timeout", TIMEOUT_TEXT) and session._transcribing is None
+
+        stuck.release.set()
+        await bridge.fire("stt.transcribe", voice_payload(request_id="voice-b"))
+        assert transcripts(bridge)[1] == {"request_id": "voice-b", "text": "tarde"}
+    finally:
+        stuck.release.set()
+
+
+async def test_the_session_deadline_also_cuts_an_http_backend_waiting_for_a_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    with FakeOpenAIServer() as server:
+        server.queue_error(429, "slow down", headers={"retry-after-ms": "100000"})
+        server.queue_completion("hola")
+        backend = ChatAudioSTT(base_url=server.base_url, api_key="k", model="m")
+        bridge, _session, _ = voice_rig(backend, stt_deadline=0.5)
+        try:
+            started = time.monotonic()
+            await asyncio.wait_for(bridge.fire("stt.transcribe", voice_payload()), 10)
+            assert time.monotonic() - started < 3
+        finally:
+            await backend.close()
+    assert error_of(transcripts(bridge)[0]) == ("timeout", TIMEOUT_TEXT)
+
+
+@pytest.mark.parametrize(
+    "session_language, env, expected",
+    [("en", {}, "en"), ("es", {}, "es"), ("en", {"BABAS_STT_LANGUAGE": "es"}, "es"), ("es", {"BABAS_STT_LANGUAGE": "en-US"}, "en")],
+)
+async def test_the_session_language_reaches_the_provider_unless_one_is_configured(
+    monkeypatch: pytest.MonkeyPatch, session_language: str, env: Dict[str, str], expected: str
+) -> None:
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    with FakeOpenAIServer() as server:
+        server.queue_transcription("hola")
+        settings = Settings.from_env(
+            {"BABAS_STT_PROVIDER": "whisper", "BABAS_STT_BASE_URL": server.base_url, "BABAS_STT_API_KEY": "k", **env}
+        )
+        backend = make_stt(settings)
+        bridge, _session, _ = voice_rig(backend, language=session_language)
+        try:
+            await bridge.fire("stt.transcribe", voice_payload())
+        finally:
+            await backend.close()
+    assert transcripts(bridge) == [{"request_id": VOICE_ID, "text": "hola"}]
+    assert server.requests[0].language == expected
+
+
+async def test_the_transcript_is_cleaned_whatever_the_backend_returns() -> None:
+    bridge, _session, _fake = voice_rig(FakeSTT("\x1b]0;PWNED\x07\x1b[2J“abre YouTube”\x08\r\n"))
+    await bridge.fire("stt.transcribe", voice_payload())
+    assert transcripts(bridge) == [{"request_id": VOICE_ID, "text": "abre YouTube"}]
+    bridge, _session, _fake = voice_rig(FakeSTT("\x1b[2J\x07\x08"))
+    await bridge.fire("stt.transcribe", voice_payload())
+    assert error_of(transcripts(bridge)[0]) == ("empty", EMPTY_TEXT)
 
 
 @pytest.mark.parametrize(

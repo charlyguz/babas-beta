@@ -5,15 +5,18 @@ import {
   canSend,
   initialState,
   isDisconnected,
+  micBlockedByRequest,
   micDisabled,
   micLabelKey,
   reduce,
   runStateKey,
+  showCancel,
   showPermissionButton,
   showResume,
   showStop,
   statusKey,
   voiceErrorKey,
+  voiceNoticeKey,
   voiceStatusKey,
   type LogItem,
   type PanelAction,
@@ -32,6 +35,7 @@ export interface ViewDeps {
   armDelayMs?: number;
   voice?: { createRecorder: (hooks: RecorderHooks) => VoiceRecorderLike };
   openMicPermission?: () => void;
+  watchMicPermission?: (onGranted: () => void) => () => void;
   newRequestId?: () => string;
   transcribeTimeoutMs?: number;
 }
@@ -46,6 +50,7 @@ const DEFAULT_ARM_DELAY_MS = 500;
 const MAX_TASK_LENGTH = 4000;
 const DEFAULT_TRANSCRIBE_TIMEOUT_MS = 100_000;
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const VOICE_NOTE_ID = 'babas-voice-note';
 
 interface ElOptions {
   cls?: string;
@@ -81,6 +86,14 @@ function svgIcon(cls: string, shapes: Array<[string, Record<string, string>]>): 
 function failureFor(err: unknown): VoiceFailure {
   const { code } = classifyCaptureError(err);
   return code === 'permission' || code === 'no_device' || code === 'mic_busy' || code === 'empty' ? code : 'capture';
+}
+
+function supportsFieldSizing(): boolean {
+  try {
+    return CSS.supports('field-sizing', 'content');
+  } catch {
+    return false;
+  }
 }
 
 function validPort(raw: string): number | null {
@@ -129,13 +142,17 @@ export function mountPanel(root: HTMLElement, deps: ViewDeps): PanelView {
       ['path', { d: 'M12 18.5v3M8.5 21.5h7' }],
     ]),
     svgIcon('mic-icon-done', [['path', { d: 'M5 12.5l4.5 4.5L19 7' }]]),
+    svgIcon('mic-icon-wait', [['circle', { cx: '12', cy: '12', r: '8', 'stroke-dasharray': '38 13' }]]),
     micLabel,
   );
   const voiceStatus = el('div', { cls: 'voice-status', testid: 'voice-status', attrs: { role: 'status', 'aria-live': 'polite' } });
   const levelBar = el('span', { cls: 'voice-level-bar' });
   const level = el('div', { cls: 'voice-level', testid: 'voice-level', attrs: { 'aria-hidden': 'true' } }, levelBar);
+  const cancel = el('button', { cls: 'btn voice-cancel', testid: 'voice-cancel', text: t('voiceCancel'), attrs: { type: 'button' } });
+  const meter = el('div', { cls: 'voice-meter' }, level, cancel);
+  const note = el('p', { cls: 'voice-note', testid: 'voice-note', text: t('voiceBlockedByRequest'), attrs: { id: VOICE_NOTE_ID } });
   const grant = el('button', { cls: 'btn btn-primary btn-block voice-permission', testid: 'voice-permission', text: t('voiceGrantPermission'), attrs: { type: 'button' } });
-  const voiceBox = el('div', { cls: 'voice', testid: 'voice' }, voiceStatus, level, grant);
+  const voiceBox = el('div', { cls: 'voice', testid: 'voice' }, voiceStatus, meter, note, grant);
   const compose = el('div', { cls: 'compose' }, input, el('div', { cls: 'compose-actions' }, mic, send));
   const footer = el('footer', { cls: 'footer' }, runState, stop, resume, voiceBox, compose);
 
@@ -161,6 +178,15 @@ export function mountPanel(root: HTMLElement, deps: ViewDeps): PanelView {
   let watchdog: ReturnType<typeof setTimeout> | undefined;
   let refocusMic = false;
   let renderedVoice = '';
+  let stopWatching: (() => void) | null = null;
+  const nativeAutosize = supportsFieldSizing();
+
+  function fitInput(): void {
+    if (nativeAutosize) return;
+    input.style.height = '0px';
+    const content = input.scrollHeight;
+    input.style.height = content > 0 ? `${content + input.offsetHeight - input.clientHeight}px` : '';
+  }
 
   function insertTranscript(raw: string): void {
     const spoken = raw.replace(/\s+/g, ' ').trim();
@@ -168,9 +194,12 @@ export function mountPanel(root: HTMLElement, deps: ViewDeps): PanelView {
     const current = input.value;
     const separator = current === '' || /\s$/.test(current) ? '' : ' ';
     input.value = (current + separator + spoken).slice(0, MAX_TASK_LENGTH);
-    input.focus();
+    const active = document.activeElement;
+    // A card that is waiting for an answer, or any control the person moved to meanwhile, keeps the focus.
+    if (activeRequest(state) === undefined && (active === null || active === document.body || active === mic || active === input)) input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
-    input.scrollTop = input.scrollHeight;
+    fitInput();
+    input.scrollTop = current === '' ? 0 : input.scrollHeight;
   }
 
   const dispatch = (action: PanelAction): void => {
@@ -197,7 +226,7 @@ export function mountPanel(root: HTMLElement, deps: ViewDeps): PanelView {
   }
 
   async function beginRecording(): Promise<void> {
-    if (!voice || state.voice !== 'idle' || isDisconnected(state)) return;
+    if (!voice || state.voice !== 'idle' || micDisabled(state)) return;
     refocusMic = document.activeElement === mic;
     const mine = (attempt += 1);
     const created = voice.createRecorder({
@@ -248,10 +277,18 @@ export function mountPanel(root: HTMLElement, deps: ViewDeps): PanelView {
     }, transcribeTimeoutMs);
   }
 
+  function cancelRecording(): void {
+    if (!showCancel(state)) return;
+    releaseRecorder();
+    dispatch({ type: 'voice.cancelled' });
+    mic.focus();
+  }
+
   mic.addEventListener('click', () => {
     if (state.voice === 'idle') void beginRecording();
     else if (state.voice === 'recording') finishRecording();
   });
+  cancel.addEventListener('click', cancelRecording);
   grant.addEventListener('click', () => {
     deps.openMicPermission?.();
   });
@@ -269,10 +306,12 @@ export function mountPanel(root: HTMLElement, deps: ViewDeps): PanelView {
     const message: PanelToSw = windowId === undefined ? { type: 'task.start', text } : { type: 'task.start', text, windowId };
     if (!deps.send(message)) return;
     input.value = '';
+    fitInput();
     dispatch({ type: 'user.sent', text, ts: now() });
   };
 
   send.addEventListener('click', submit);
+  input.addEventListener('input', fitInput);
   input.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
     event.preventDefault();
@@ -476,13 +515,28 @@ export function mountPanel(root: HTMLElement, deps: ViewDeps): PanelView {
     voiceBox.hidden = !available;
     if (state.voice !== 'starting' && state.voice !== 'recording' && recorder) releaseRecorder();
     if (state.voice !== 'transcribing') clearWatchdog();
-    mic.disabled = micDisabled(state);
+    // The button stays focusable: a native "disabled" would drop the focus of a keyboard user at every phase change.
+    if (micDisabled(state)) mic.setAttribute('aria-disabled', 'true');
+    else mic.removeAttribute('aria-disabled');
+    const blocked = micBlockedByRequest(state);
+    note.hidden = !blocked;
+    if (blocked) mic.setAttribute('aria-describedby', VOICE_NOTE_ID);
+    else mic.removeAttribute('aria-describedby');
     mic.dataset.phase = state.voice;
     mic.setAttribute('aria-busy', state.voice === 'starting' || state.voice === 'transcribing' ? 'true' : 'false');
     micLabel.textContent = t(micLabelKey(state));
     level.hidden = state.voice !== 'recording';
+    cancel.hidden = !showCancel(state);
+    meter.hidden = cancel.hidden;
     grant.hidden = !showPermissionButton(state);
-    const key = `${state.voice}|${state.voiceError ?? ''}`;
+    voiceBox.classList.toggle('is-quiet', state.voice === 'idle' && !state.voiceError && !state.voiceNotice && !blocked);
+    if (grant.hidden) {
+      stopWatching?.();
+      stopWatching = null;
+    } else if (!stopWatching && deps.watchMicPermission) {
+      stopWatching = deps.watchMicPermission(() => dispatch({ type: 'voice.permission_granted' }));
+    }
+    const key = `${state.voice}|${state.voiceError ?? ''}|${state.voiceNotice ?? ''}`;
     if (key !== renderedVoice) {
       renderedVoice = key;
       const statusKey = voiceStatusKey(state);
@@ -492,6 +546,8 @@ export function mountPanel(root: HTMLElement, deps: ViewDeps): PanelView {
         if (state.voice === 'recording') parts.push(el('span', { cls: 'voice-hint', testid: 'voice-hint', text: t('voiceListeningHint') }));
       } else if (state.voiceError) {
         parts.push(el('span', { cls: 'voice-error', testid: 'voice-error', text: t(voiceErrorKey(state.voiceError)) }));
+      } else if (state.voiceNotice) {
+        parts.push(el('span', { cls: 'voice-notice', testid: 'voice-notice', text: t(voiceNoticeKey(state.voiceNotice)) }));
       }
       voiceStatus.replaceChildren(...parts);
       if (refocusMic && state.voice === 'idle' && state.voiceError !== null && (document.activeElement === document.body || document.activeElement === null)) mic.focus();
@@ -524,6 +580,8 @@ export function mountPanel(root: HTMLElement, deps: ViewDeps): PanelView {
     dispose: () => {
       window.removeEventListener('pagehide', onPageHide);
       onPageHide();
+      stopWatching?.();
+      stopWatching = null;
     },
   };
 }

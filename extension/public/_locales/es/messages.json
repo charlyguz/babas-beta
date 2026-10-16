@@ -166,7 +166,22 @@
     "message": "Hablar"
   },
   "voiceFinish": {
-    "message": "Listo"
+    "message": "Terminar"
+  },
+  "voiceWait": {
+    "message": "Espere…"
+  },
+  "voiceCancel": {
+    "message": "Cancelar grabación"
+  },
+  "voiceCancelled": {
+    "message": "Se canceló la grabación. No se envió nada."
+  },
+  "voiceBlockedByRequest": {
+    "message": "Para hablar, primero responda la pregunta de arriba."
+  },
+  "voicePermissionOk": {
+    "message": "Ya tiene permiso para usar el micrófono. Presione «Hablar»."
   },
   "voiceStarting": {
     "message": "Preparando el micrófono…"
@@ -175,7 +190,7 @@
     "message": "Estoy escuchando…"
   },
   "voiceListeningHint": {
-    "message": "Cuando termine de hablar, presione «Listo»."
+    "message": "Cuando termine de hablar, presione «Terminar». Si hace una pausa de unos segundos, la grabación se detiene sola."
   },
   "voiceTranscribing": {
     "message": "Escribiendo lo que dijo…"
@@ -205,7 +220,7 @@
     "message": "No alcancé a escuchar nada. Acérquese al micrófono, presione «Hablar» y hable con calma."
   },
   "voiceErrPermission": {
-    "message": "BABAS necesita su permiso para usar el micrófono. Presione «Dar permiso», elija «Permitir» y luego regrese aquí y presione «Hablar»."
+    "message": "BABAS necesita su permiso para usar el micrófono. Presione «Dar permiso». Cuando el navegador le pregunte por el micrófono, elija permitirlo. Luego regrese aquí y presione «Hablar»."
   },
   "voiceErrNoDevice": {
     "message": "No encontré un micrófono. Revise que esté conectado e intente de nuevo."
@@ -222,11 +237,14 @@
   "micPermIntro": {
     "message": "Para escribir lo que usted diga, BABAS necesita usar el micrófono de su computadora. BABAS solo lo usa cuando usted presiona «Hablar»."
   },
+  "micPermPrivacy": {
+    "message": "La grabación se envía al servicio de voz que eligió quien instaló BABAS, solo para convertir lo que usted diga en texto. BABAS no la guarda."
+  },
   "micPermButton": {
     "message": "Permitir el micrófono"
   },
   "micPermWaiting": {
-    "message": "Elija «Permitir» en la ventana que apareció cerca de la barra de direcciones."
+    "message": "El navegador le preguntará por el micrófono en una ventana cerca de la barra de direcciones. Elija permitirlo. Si le da varias opciones, elija una que no sea solo por esta vez."
   },
   "micPermDone": {
     "message": "Listo. Ya puede cerrar esta pestaña y volver a BABAS."
@@ -236,6 +254,9 @@
   },
   "micPermNoDevice": {
     "message": "No encontré un micrófono. Revise que esté conectado e intente de nuevo."
+  },
+  "micPermBusy": {
+    "message": "No pude usar el micrófono. Quizás otra aplicación lo está usando. Ciérrela e intente de nuevo."
   },
   "micPermError": {
     "message": "No pude usar el micrófono. Intente de nuevo."

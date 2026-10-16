@@ -2,6 +2,7 @@ import './panel.css';
 import { PANEL_PORT_NAME } from '../shared/messages';
 import { PanelConnection, type PortLike } from './connection';
 import { t } from './i18n';
+import { openMicPermissionTab, watchMicrophonePermission, type TabsApi, type WindowsApi } from './mic-permission';
 import { mountPanel, type ViewDeps } from './view';
 import { VoiceRecorder, browserRecorderDeps, hasMicrophoneSupport } from './voice';
 
@@ -10,8 +11,32 @@ function voiceDeps(): ViewDeps['voice'] {
   return { createRecorder: (hooks) => new VoiceRecorder(browserRecorderDeps(), hooks) };
 }
 
+const tabsApi: TabsApi = {
+  query: (info) => chrome.tabs.query(info),
+  update: (tabId, properties) => chrome.tabs.update(tabId, properties),
+  create: (properties) => chrome.tabs.create(properties),
+};
+const windowsApi: WindowsApi = { update: (windowId, info) => chrome.windows.update(windowId, info) };
+
 function openMicPermission(): void {
-  chrome.tabs.create({ url: chrome.runtime.getURL('micpermission.html') }).catch(() => undefined);
+  void openMicPermissionTab(chrome.runtime.getURL('micpermission.html'), tabsApi, windowsApi);
+}
+
+function watchMicPermission(onGranted: () => void): () => void {
+  return watchMicrophonePermission(onGranted, {
+    query: () => navigator.permissions.query({ name: 'microphone' }),
+    onResume: (listener) => {
+      const onVisible = (): void => {
+        if (document.visibilityState === 'visible') listener();
+      };
+      window.addEventListener('focus', listener);
+      document.addEventListener('visibilitychange', onVisible);
+      return () => {
+        window.removeEventListener('focus', listener);
+        document.removeEventListener('visibilitychange', onVisible);
+      };
+    },
+  });
 }
 
 function connectPort(): PortLike {
@@ -42,6 +67,7 @@ function start(): void {
     getWindowId: () => windowId,
     voice: voiceDeps(),
     openMicPermission,
+    watchMicPermission,
   });
   connection.start();
   chrome.windows

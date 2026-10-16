@@ -43,6 +43,7 @@ brain, and expose it over MCP. The roadmap is `docs/PLAN.md`.
 | P2 | All actions, side panel, safety gate and confirmations, observe → act agent | done (see "As built" in `docs/tasks/P2.md`) |
 | P3 | OpenAI-compatible provider config, logging, MCP server | done (see "As built" in `docs/tasks/P3.md`) |
 | P4 | Spanish assistant prompt, 2 real flows, README + GIF, MIT license | partial: prompt, README, `LICENSE` done; flows, rehearsals, GIF and live checks open (see "As built" in `docs/tasks/P4.md`) |
+| P5 | Voice dictation in the side panel (speech-to-text backends), dependency-free terminal UI | built and reviewed; terminal fixes and live checks pending (`docs/tasks/P5.md`) |
 
 ## Layout (now)
 | Path | Responsibility |
@@ -61,6 +62,9 @@ brain, and expose it over MCP. The roadmap is `docs/PLAN.md`.
 | `babas/safety.py` | `SafetyPolicy` (flags → allow/confirm/handoff, allowlist, host parsing), PII detect/mask/redact, Spanish confirmation texts |
 | `babas/gate.py` | `SafeDriver`: wraps any `BrowserDriver`; confirmations, batch approval, handoffs, domain prompts; `ActionDenied`, `HandoffRequired` |
 | `babas/channels.py` | `UserChannel` implementations: `ConsoleChannel`, `DenyChannel`, `PanelChannel` (bridge `ui.*` requests) |
+| `babas/stt.py` | Speech to text: `chat` / `whisper` / `local` backends, `make_stt`, `resolve_stt`, `stt_status`, `STTError`; `Session` answers `stt.transcribe` (`docs/PROTOCOL.md` §6) |
+| `babas/ui.py` | Dependency-free terminal rendering (ANSI, cards, steps, `Status`); `python -m babas.ui` previews it |
+| `extension/src/sidepanel/voice.ts`, `background/voice-relay.ts`, `micpermission/` | Panel dictation (16 kHz WAV), SW relay to Python, microphone permission page |
 | `babas/logs.py` | `RedactingFilter`, `setup_logging` (stderr) |
 | `babas/voice.py` / `babas/debug.py` | Lazy loaders for the optional voice modules (silent import) / temp debug dir and error screenshots |
 | `babas/devrepl.py` | `run_serve(settings, repl, mcp_http)`: bridge + pairing file + `Session` (+ MCP HTTP), or `--repl`: developer console `ls`, `click N`, `type N text`, `help` |
@@ -219,6 +223,8 @@ Set `chrome.storage.local.bridgePort` from the service worker to point it at a t
   - The Python gate is stricter too (single-character `press` = typing, non-http(s) URLs refused, hardened host parsing).
   - An explicit `screenshot` action writes `screenshot_*.png` to the working directory (SAFETY.md §6 clarified).
   - P2 was committed locally first (the user asked for no push, PR or CI wait), then pushed on request.
+- 2026-10-15 (voice, P5): speech backends are pluggable (`BABAS_STT_*`); faster-whisper is an optional extra (`.[stt]`) the user asked for;
+  the speech endpoint only inherits the LLM key/model when it is the same endpoint; `babas/ui.py` reads NO_COLOR/FORCE_COLOR/TERM directly (terminal conventions, not BABAS settings).
 - 2026-10-12 (P3 implementation):
   - `BABAS_ALLOWED_DOMAINS` extends the default allowlist (`*` = all); the extension still enforces its own list.
   - `make_llm` is lazy about configuration errors (per-task `LLMConfigError`), so MCP servers and `serve` always start.

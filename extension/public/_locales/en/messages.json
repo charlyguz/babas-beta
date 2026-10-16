@@ -166,7 +166,22 @@
     "message": "Speak"
   },
   "voiceFinish": {
-    "message": "Done"
+    "message": "Finish"
+  },
+  "voiceWait": {
+    "message": "Wait…"
+  },
+  "voiceCancel": {
+    "message": "Cancel recording"
+  },
+  "voiceCancelled": {
+    "message": "Recording cancelled. Nothing was sent."
+  },
+  "voiceBlockedByRequest": {
+    "message": "To speak, first answer the question above."
+  },
+  "voicePermissionOk": {
+    "message": "You now have permission to use the microphone. Press “Speak”."
   },
   "voiceStarting": {
     "message": "Getting the microphone ready…"
@@ -175,7 +190,7 @@
     "message": "I'm listening…"
   },
   "voiceListeningHint": {
-    "message": "When you finish speaking, press “Done”."
+    "message": "When you finish speaking, press “Finish”. If you pause for a few seconds, the recording stops by itself."
   },
   "voiceTranscribing": {
     "message": "Writing down what you said…"
@@ -205,7 +220,7 @@
     "message": "I could not hear anything. Move closer to the microphone, press “Speak” and talk calmly."
   },
   "voiceErrPermission": {
-    "message": "BABAS needs your permission to use the microphone. Press “Give permission”, choose “Allow”, then come back here and press “Speak”."
+    "message": "BABAS needs your permission to use the microphone. Press “Give permission”. When the browser asks about the microphone, choose to allow it. Then come back here and press “Speak”."
   },
   "voiceErrNoDevice": {
     "message": "I could not find a microphone. Check that it is connected and try again."
@@ -222,11 +237,14 @@
   "micPermIntro": {
     "message": "To write down what you say, BABAS needs to use your computer's microphone. BABAS only uses it when you press “Speak”."
   },
+  "micPermPrivacy": {
+    "message": "The recording is sent to the voice service chosen by whoever installed BABAS, only to turn what you say into text. BABAS does not save it."
+  },
   "micPermButton": {
     "message": "Allow the microphone"
   },
   "micPermWaiting": {
-    "message": "Choose “Allow” in the window that appeared near the address bar."
+    "message": "The browser will ask about the microphone in a window near the address bar. Choose to allow it. If it offers several options, pick one that is not just for this time."
   },
   "micPermDone": {
     "message": "Done. You can now close this tab and go back to BABAS."
@@ -236,6 +254,9 @@
   },
   "micPermNoDevice": {
     "message": "I could not find a microphone. Check that it is connected and try again."
+  },
+  "micPermBusy": {
+    "message": "I could not use the microphone. Another app may be using it. Close it and try again."
   },
   "micPermError": {
     "message": "I could not use the microphone. Please try again."

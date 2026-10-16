@@ -34,10 +34,13 @@ SECRET_KEY = "sk-test-SECRET-0123456789"
 TRANSCRIPT = "busque recetas de pozole"
 
 LABEL_START = "Hablar"
-LABEL_FINISH = "Listo"
+LABEL_FINISH = "Terminar"
 STATUS_STARTING = "Preparando el micrófono…"
 STATUS_LISTENING = "Estoy escuchando…"
-HINT_LISTENING = "Cuando termine de hablar, presione «Listo»."
+HINT_LISTENING = (
+    "Cuando termine de hablar, presione «Terminar». "
+    "Si hace una pausa de unos segundos, la grabación se detiene sola."
+)
 STATUS_TRANSCRIBING = "Escribiendo lo que dijo…"
 GRANT_LABEL = "Dar permiso"
 PERMISSION_TITLE = "Permiso del micrófono"
@@ -52,8 +55,9 @@ TEXT_NO_CONNECTION = (
     "Revise que la aplicación esté abierta e intente de nuevo."
 )
 TEXT_PERMISSION = (
-    "BABAS necesita su permiso para usar el micrófono. Presione «Dar permiso», elija «Permitir» "
-    "y luego regrese aquí y presione «Hablar»."
+    "BABAS necesita su permiso para usar el micrófono. Presione «Dar permiso». "
+    "Cuando el navegador le pregunte por el micrófono, elija permitirlo. "
+    "Luego regrese aquí y presione «Hablar»."
 )
 
 WATCH_MICROPHONE = """() => {

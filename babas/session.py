@@ -16,13 +16,15 @@ from babas.stt import (
     BAD_AUDIO_TEXT,
     EMPTY_TEXT,
     ERROR_CODES,
-    MAX_TRANSCRIPT_CHARS,
     NOT_CONFIGURED_TEXT,
     PROVIDER_TEXT,
     STT_BUSY_TEXT,
+    STT_DEADLINE_S,
     SpeechToText,
     STTConfigError,
     STTError,
+    clean_transcript,
+    with_deadline,
 )
 
 log = logging.getLogger("babas.session")
@@ -107,6 +109,7 @@ class Session:
         max_retries: int = 2,
         busy: Optional[Callable[[], bool]] = None,
         stt_factory: Optional[Callable[[], SpeechToText]] = None,
+        stt_deadline: float = STT_DEADLINE_S,
     ):
         self.bridge = bridge
         self.llm_factory = llm_factory
@@ -116,6 +119,7 @@ class Session:
         self.max_retries = max_retries
         self.busy = busy
         self.stt_factory = stt_factory
+        self.stt_deadline = stt_deadline
         self._task: Optional["asyncio.Task[None]"] = None
         self._stt: Optional[SpeechToText] = None
         self._transcribing: Optional["asyncio.Task[None]"] = None
@@ -269,7 +273,10 @@ class Session:
             text = await self._transcribe(audio)
         except STTError as exc:
             code = exc.code if exc.code in ERROR_CODES else "provider"
-            log.info("voice transcription failed (%s)", code)
+            if code == "timeout":
+                log.warning("voice transcription timed out")
+            else:
+                log.info("voice transcription failed (%s)", code)
             error = (code, redact(str(exc.message))[:MAX_MESSAGE_CHARS])
         else:
             log.info("voice transcription finished (%d characters)", len(text))
@@ -283,7 +290,7 @@ class Session:
 
     async def _transcribe(self, audio: bytes) -> str:
         try:
-            text = await self._transcriber().transcribe(audio, VOICE_MIME, self.language)
+            text = await with_deadline(self._transcriber().transcribe(audio, VOICE_MIME, self.language), self.stt_deadline)
         except STTError:
             raise
         except Exception as exc:
@@ -291,7 +298,7 @@ class Session:
             raise STTError("provider", PROVIDER_TEXT) from None
         if not isinstance(text, str):
             raise STTError("provider", PROVIDER_TEXT)
-        text = text.strip()[:MAX_TRANSCRIPT_CHARS].rstrip()
+        text = clean_transcript(text)
         if not text:
             raise STTError("empty", EMPTY_TEXT)
         return text

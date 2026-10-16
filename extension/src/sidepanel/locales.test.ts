@@ -53,6 +53,11 @@ describe('locales', () => {
     const keys = [
       'voiceStart',
       'voiceFinish',
+      'voiceWait',
+      'voiceCancel',
+      'voiceCancelled',
+      'voiceBlockedByRequest',
+      'voicePermissionOk',
       'voiceStarting',
       'voiceListening',
       'voiceListeningHint',
@@ -60,11 +65,13 @@ describe('locales', () => {
       'voiceGrantPermission',
       'micPermTitle',
       'micPermIntro',
+      'micPermPrivacy',
       'micPermButton',
       'micPermWaiting',
       'micPermDone',
       'micPermDenied',
       'micPermNoDevice',
+      'micPermBusy',
       'micPermError',
     ];
     for (const key of keys) {
@@ -72,12 +79,39 @@ describe('locales', () => {
       expect(en[key], key).toBeDefined();
     }
     expect(es.voiceStart?.message).toBe('Hablar');
-    expect(es.voiceFinish?.message).toBe('Listo');
+    expect(es.voiceFinish?.message).toBe('Terminar');
+    expect(en.voiceFinish?.message).toBe('Finish');
+    expect(es.voiceWait?.message).toBe('Espere…');
+    expect(es.voiceCancel?.message).toBe('Cancelar grabación');
     expect(es.voiceListening?.message).toBe('Estoy escuchando…');
     expect(es.voiceTranscribing?.message).toBe('Escribiendo lo que dijo…');
     expect(es.voiceGrantPermission?.message).toBe('Dar permiso');
     expect(es.micPermButton?.message).toBe('Permitir el micrófono');
     expect(es.micPermDone?.message).toBe('Listo. Ya puede cerrar esta pestaña y volver a BABAS.');
+  });
+
+  it('no two buttons that can be on screen together share a label, and the waiting label is not Hablar', () => {
+    for (const lang of [es, en]) {
+      const labels = ['voiceStart', 'voiceFinish', 'voiceWait', 'voiceCancel', 'handoffDone', 'askCancel', 'askReply', 'stop', 'send', 'voiceGrantPermission'].map((key) => lang[key]?.message);
+      expect(new Set(labels).size).toBe(labels.length);
+    }
+  });
+
+  it('the recording hint names the real button and says that a pause stops the recording', () => {
+    expect(es.voiceListeningHint?.message).toContain(`«${es.voiceFinish?.message}»`);
+    expect(es.voiceListeningHint?.message).toContain('se detiene sola');
+    expect(en.voiceListeningHint?.message).toContain(`“${en.voiceFinish?.message}”`);
+    expect(en.voiceListeningHint?.message).toContain('stops by itself');
+  });
+
+  it('the permission texts do not name a browser button that may not exist', () => {
+    for (const lang of [es, en]) {
+      for (const key of ['voiceErrPermission', 'micPermWaiting']) {
+        expect(lang[key]?.message, key).not.toMatch(/[«“](Permitir|Allow)[»”]/);
+      }
+    }
+    expect(es.voiceErrPermission?.message).toContain('«Dar permiso»');
+    expect(en.voiceErrPermission?.message).toContain('“Give permission”');
   });
 
   it('every literal t("key") in the extension sources exists', () => {
