@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "id": "11112222333344445555666677778888",
+  "type": "result",
+  "ok": false,
+  "error": {
+    "code": "STALE_SNAPSHOT",
+    "message": "The page changed since that snapshot: observe it again"
+  }
+}

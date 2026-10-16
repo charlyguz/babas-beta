@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Iniciar sesión de prueba</title>
+<style>
+  body { font-family: sans-serif; margin: 16px; }
+  .field { margin: 8px 0; }
+  label { display: inline-block; min-width: 110px; }
+</style>
+</head>
+<body>
+<h1>Acceso</h1>
+<form id="login" action="#login">
+  <div class="field"><label for="usuario">Usuario</label><input type="text" id="usuario" name="usuario"></div>
+  <div class="field"><label for="clave">Contraseña</label><input type="password" id="clave" name="clave"></div>
+  <button type="submit">Entrar</button>
+</form>
+<p id="out"></p>
+
+<script>
+  document.getElementById('login').addEventListener('submit', function (event) {
+    event.preventDefault();
+    document.getElementById('out').textContent = 'Intento de acceso';
+  });
+</script>
+</body>
+</html>

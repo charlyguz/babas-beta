@@ -1,21 +1,2 @@
-# BABAS Dependencies
-# preview beta V0.1 tested done formating done
-
-# Core
-openai>=1.0.0
-playwright>=1.40.0
-pydantic>=2.0.0
-python-dotenv>=1.0.0
-
-# Voice output (optional - for voice butler)
-elevenlabs>=1.0.0
-pygame>=2.5.0
-
-# Voice input (optional - for voice commands)
-sounddevice>=0.4.0
-numpy>=1.24.0
-keyboard>=0.13.0
-
-# GUI
-customtkinter>=5.2.0
-pillow>=10.0.0
+# Installs BABAS with voice extras; developers: pip install -e .[dev]
+-e .[voice]

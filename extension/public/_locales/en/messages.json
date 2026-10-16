@@ -1,0 +1,264 @@
+{
+  "extName": {
+    "message": "BABAS"
+  },
+  "extDescription": {
+    "message": "Your step-by-step browser assistant. It always asks before doing anything important."
+  },
+  "statusConnected": {
+    "message": "Connected"
+  },
+  "statusDisconnected": {
+    "message": "Not connected to BABAS"
+  },
+  "statusHalted": {
+    "message": "Stopped"
+  },
+  "statusWorking": {
+    "message": "Working…"
+  },
+  "inputPlaceholder": {
+    "message": "What would you like to do? For example: find recipe videos on YouTube"
+  },
+  "send": {
+    "message": "Send"
+  },
+  "stop": {
+    "message": "Stop"
+  },
+  "resume": {
+    "message": "Resume"
+  },
+  "confirmYes": {
+    "message": "Yes, continue"
+  },
+  "confirmNo": {
+    "message": "No"
+  },
+  "babasSays": {
+    "message": "BABAS says:"
+  },
+  "titlePayment": {
+    "message": "Confirm a payment"
+  },
+  "titleSubmit": {
+    "message": "Submit a form"
+  },
+  "titlePii": {
+    "message": "Type personal data"
+  },
+  "titleImportant": {
+    "message": "Important action"
+  },
+  "askReply": {
+    "message": "Reply"
+  },
+  "askCancel": {
+    "message": "Cancel"
+  },
+  "askPlaceholder": {
+    "message": "Type your answer here"
+  },
+  "handoffDone": {
+    "message": "Done"
+  },
+  "allowTitle": {
+    "message": "Allow this site?"
+  },
+  "allowText": {
+    "message": "BABAS wants to use $HOST$.",
+    "placeholders": {
+      "host": {
+        "content": "$1"
+      }
+    }
+  },
+  "allowYes": {
+    "message": "Allow"
+  },
+  "allowNo": {
+    "message": "Don't allow"
+  },
+  "notConnectedHelp": {
+    "message": "Start the BABAS app on your computer (python -m babas serve)."
+  },
+  "runDone": {
+    "message": "Done."
+  },
+  "runStopped": {
+    "message": "Stopped. Nothing else was done."
+  },
+  "runFailed": {
+    "message": "I couldn't finish the task."
+  },
+  "settings": {
+    "message": "Settings"
+  },
+  "settingsPort": {
+    "message": "Connection port"
+  },
+  "settingsSites": {
+    "message": "Allowed sites"
+  },
+  "settingsNoSites": {
+    "message": "None yet"
+  },
+  "remove": {
+    "message": "Remove"
+  },
+  "pageFallbackLabel": {
+    "message": "the page"
+  },
+  "lineClick": {
+    "message": "Press “$LABEL$” on $HOST$",
+    "placeholders": {
+      "label": {
+        "content": "$1"
+      },
+      "host": {
+        "content": "$2"
+      }
+    }
+  },
+  "lineType": {
+    "message": "Type “$TEXT$” in “$LABEL$” ($HOST$)",
+    "placeholders": {
+      "text": {
+        "content": "$1"
+      },
+      "label": {
+        "content": "$2"
+      },
+      "host": {
+        "content": "$3"
+      }
+    }
+  },
+  "lineSelect": {
+    "message": "Choose “$VALUE$” in “$LABEL$” ($HOST$)",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      },
+      "label": {
+        "content": "$2"
+      },
+      "host": {
+        "content": "$3"
+      }
+    }
+  },
+  "linePress": {
+    "message": "Press the $KEY$ key in “$LABEL$” ($HOST$)",
+    "placeholders": {
+      "key": {
+        "content": "$1"
+      },
+      "label": {
+        "content": "$2"
+      },
+      "host": {
+        "content": "$3"
+      }
+    }
+  },
+  "voiceStart": {
+    "message": "Speak"
+  },
+  "voiceFinish": {
+    "message": "Finish"
+  },
+  "voiceWait": {
+    "message": "Wait…"
+  },
+  "voiceCancel": {
+    "message": "Cancel recording"
+  },
+  "voiceCancelled": {
+    "message": "Recording cancelled. Nothing was sent."
+  },
+  "voiceBlockedByRequest": {
+    "message": "To speak, first answer the question above."
+  },
+  "voicePermissionOk": {
+    "message": "You now have permission to use the microphone. Press “Speak”."
+  },
+  "voiceStarting": {
+    "message": "Getting the microphone ready…"
+  },
+  "voiceListening": {
+    "message": "I'm listening…"
+  },
+  "voiceListeningHint": {
+    "message": "When you finish speaking, press “Finish”. If you pause for a few seconds, the recording stops by itself."
+  },
+  "voiceTranscribing": {
+    "message": "Writing down what you said…"
+  },
+  "voiceGrantPermission": {
+    "message": "Give permission"
+  },
+  "voiceErrNoConnection": {
+    "message": "There is no connection with BABAS, so I could not write down what you said. Check that the app is open and try again."
+  },
+  "voiceErrTimeout": {
+    "message": "It took too long to write down what you said. Please try again."
+  },
+  "voiceErrBusy": {
+    "message": "I am still writing down your previous recording. Wait a moment and try again."
+  },
+  "voiceErrNotConfigured": {
+    "message": "Voice typing is not ready yet. For now you can type with the keyboard."
+  },
+  "voiceErrProvider": {
+    "message": "I could not write down what you said. Try again in a moment or type with the keyboard."
+  },
+  "voiceErrBadAudio": {
+    "message": "The recording did not sound right. Please try again."
+  },
+  "voiceErrEmpty": {
+    "message": "I could not hear anything. Move closer to the microphone, press “Speak” and talk calmly."
+  },
+  "voiceErrPermission": {
+    "message": "BABAS needs your permission to use the microphone. Press “Give permission”. When the browser asks about the microphone, choose to allow it. Then come back here and press “Speak”."
+  },
+  "voiceErrNoDevice": {
+    "message": "I could not find a microphone. Check that it is connected and try again."
+  },
+  "voiceErrMicBusy": {
+    "message": "I could not use the microphone. Another app may be using it. Close it and try again."
+  },
+  "voiceErrCapture": {
+    "message": "I could not record your voice. Please try again."
+  },
+  "micPermTitle": {
+    "message": "Microphone permission"
+  },
+  "micPermIntro": {
+    "message": "To write down what you say, BABAS needs to use your computer's microphone. BABAS only uses it when you press “Speak”."
+  },
+  "micPermPrivacy": {
+    "message": "The recording is sent to the voice service chosen by whoever installed BABAS, only to turn what you say into text. BABAS does not save it."
+  },
+  "micPermButton": {
+    "message": "Allow the microphone"
+  },
+  "micPermWaiting": {
+    "message": "The browser will ask about the microphone in a window near the address bar. Choose to allow it. If it offers several options, pick one that is not just for this time."
+  },
+  "micPermDone": {
+    "message": "Done. You can now close this tab and go back to BABAS."
+  },
+  "micPermDenied": {
+    "message": "Permission was not given. To allow it, click the icon to the left of this page's address (at the top), open “Site settings” and change “Microphone” to “Allow”. Then press the button again."
+  },
+  "micPermNoDevice": {
+    "message": "I could not find a microphone. Check that it is connected and try again."
+  },
+  "micPermBusy": {
+    "message": "I could not use the microphone. Another app may be using it. Close it and try again."
+  },
+  "micPermError": {
+    "message": "I could not use the microphone. Please try again."
+  }
+}

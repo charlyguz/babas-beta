@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "babas"
+version = "0.2.0"
+description = "BABAS: LLM browser assistant that drives your real Chromium through a Chrome extension"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["openai>=1.40", "playwright>=1.45", "pydantic>=2.6", "python-dotenv>=1.0", "websockets>=13.0"]
+
+[project.optional-dependencies]
+voice = ["elevenlabs>=1.0.0", "pygame>=2.5.0", "sounddevice>=0.4.0", "numpy>=1.24.0", "keyboard>=0.13.0", "customtkinter>=5.2.0", "pillow>=10.0.0"]
+mcp = ["mcp>=2.3,<3"]
+anthropic = ["anthropic>=0.40"]
+stt = ["faster-whisper>=1.0"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "mcp>=2.3,<3"]
+
+[project.scripts]
+babas = "babas.__main__:main"
+
+[tool.setuptools]
+py-modules = ["babas_voice", "babas_listen", "babas_gui"]
+
+[tool.setuptools.packages.find]
+include = ["babas*"]
+
+[tool.setuptools.package-data]
+"babas.drivers" = ["page_script.js"]
+"babas.prompts" = ["*.md"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["tests"]
+markers = ["e2e: needs Chromium (and the built extension for extension tests)"]

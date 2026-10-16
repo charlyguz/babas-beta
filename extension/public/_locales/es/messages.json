@@ -1,0 +1,264 @@
+{
+  "extName": {
+    "message": "BABAS"
+  },
+  "extDescription": {
+    "message": "Su asistente para usar internet paso a paso. Siempre le pregunta antes de hacer algo importante."
+  },
+  "statusConnected": {
+    "message": "Conectado"
+  },
+  "statusDisconnected": {
+    "message": "Sin conexión con BABAS"
+  },
+  "statusHalted": {
+    "message": "Detenido"
+  },
+  "statusWorking": {
+    "message": "Trabajando…"
+  },
+  "inputPlaceholder": {
+    "message": "¿Qué quiere hacer? Por ejemplo: busque videos de recetas en YouTube"
+  },
+  "send": {
+    "message": "Enviar"
+  },
+  "stop": {
+    "message": "Detener"
+  },
+  "resume": {
+    "message": "Reanudar"
+  },
+  "confirmYes": {
+    "message": "Sí, continuar"
+  },
+  "confirmNo": {
+    "message": "No"
+  },
+  "babasSays": {
+    "message": "BABAS dice:"
+  },
+  "titlePayment": {
+    "message": "Confirmar un pago"
+  },
+  "titleSubmit": {
+    "message": "Enviar un formulario"
+  },
+  "titlePii": {
+    "message": "Escribir datos personales"
+  },
+  "titleImportant": {
+    "message": "Acción importante"
+  },
+  "askReply": {
+    "message": "Responder"
+  },
+  "askCancel": {
+    "message": "Cancelar"
+  },
+  "askPlaceholder": {
+    "message": "Escriba su respuesta aquí"
+  },
+  "handoffDone": {
+    "message": "Listo"
+  },
+  "allowTitle": {
+    "message": "¿Permitir este sitio?"
+  },
+  "allowText": {
+    "message": "BABAS quiere usar el sitio $HOST$.",
+    "placeholders": {
+      "host": {
+        "content": "$1"
+      }
+    }
+  },
+  "allowYes": {
+    "message": "Permitir"
+  },
+  "allowNo": {
+    "message": "No permitir"
+  },
+  "notConnectedHelp": {
+    "message": "Abra la aplicación BABAS en su computadora (python -m babas serve)."
+  },
+  "runDone": {
+    "message": "Listo."
+  },
+  "runStopped": {
+    "message": "Detenido. No se hizo nada más."
+  },
+  "runFailed": {
+    "message": "No pude terminar la tarea."
+  },
+  "settings": {
+    "message": "Ajustes"
+  },
+  "settingsPort": {
+    "message": "Puerto de conexión"
+  },
+  "settingsSites": {
+    "message": "Sitios permitidos"
+  },
+  "settingsNoSites": {
+    "message": "Ninguno todavía"
+  },
+  "remove": {
+    "message": "Quitar"
+  },
+  "pageFallbackLabel": {
+    "message": "la página"
+  },
+  "lineClick": {
+    "message": "Presionar «$LABEL$» en $HOST$",
+    "placeholders": {
+      "label": {
+        "content": "$1"
+      },
+      "host": {
+        "content": "$2"
+      }
+    }
+  },
+  "lineType": {
+    "message": "Escribir «$TEXT$» en «$LABEL$» ($HOST$)",
+    "placeholders": {
+      "text": {
+        "content": "$1"
+      },
+      "label": {
+        "content": "$2"
+      },
+      "host": {
+        "content": "$3"
+      }
+    }
+  },
+  "lineSelect": {
+    "message": "Elegir «$VALUE$» en «$LABEL$» ($HOST$)",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      },
+      "label": {
+        "content": "$2"
+      },
+      "host": {
+        "content": "$3"
+      }
+    }
+  },
+  "linePress": {
+    "message": "Presionar la tecla $KEY$ en «$LABEL$» ($HOST$)",
+    "placeholders": {
+      "key": {
+        "content": "$1"
+      },
+      "label": {
+        "content": "$2"
+      },
+      "host": {
+        "content": "$3"
+      }
+    }
+  },
+  "voiceStart": {
+    "message": "Hablar"
+  },
+  "voiceFinish": {
+    "message": "Terminar"
+  },
+  "voiceWait": {
+    "message": "Espere…"
+  },
+  "voiceCancel": {
+    "message": "Cancelar grabación"
+  },
+  "voiceCancelled": {
+    "message": "Se canceló la grabación. No se envió nada."
+  },
+  "voiceBlockedByRequest": {
+    "message": "Para hablar, primero responda la pregunta de arriba."
+  },
+  "voicePermissionOk": {
+    "message": "Ya tiene permiso para usar el micrófono. Presione «Hablar»."
+  },
+  "voiceStarting": {
+    "message": "Preparando el micrófono…"
+  },
+  "voiceListening": {
+    "message": "Estoy escuchando…"
+  },
+  "voiceListeningHint": {
+    "message": "Cuando termine de hablar, presione «Terminar». Si hace una pausa de unos segundos, la grabación se detiene sola."
+  },
+  "voiceTranscribing": {
+    "message": "Escribiendo lo que dijo…"
+  },
+  "voiceGrantPermission": {
+    "message": "Dar permiso"
+  },
+  "voiceErrNoConnection": {
+    "message": "No hay conexión con BABAS, por eso no pude escribir lo que dijo. Revise que la aplicación esté abierta e intente de nuevo."
+  },
+  "voiceErrTimeout": {
+    "message": "Tardé demasiado en escribir lo que dijo. Intente de nuevo."
+  },
+  "voiceErrBusy": {
+    "message": "Todavía estoy escribiendo su grabación anterior. Espere un momento e intente de nuevo."
+  },
+  "voiceErrNotConfigured": {
+    "message": "La escritura por voz todavía no está lista. Por ahora puede escribir con el teclado."
+  },
+  "voiceErrProvider": {
+    "message": "No pude escribir lo que dijo. Intente de nuevo en un momento o escriba con el teclado."
+  },
+  "voiceErrBadAudio": {
+    "message": "La grabación no se escuchó bien. Intente de nuevo."
+  },
+  "voiceErrEmpty": {
+    "message": "No alcancé a escuchar nada. Acérquese al micrófono, presione «Hablar» y hable con calma."
+  },
+  "voiceErrPermission": {
+    "message": "BABAS necesita su permiso para usar el micrófono. Presione «Dar permiso». Cuando el navegador le pregunte por el micrófono, elija permitirlo. Luego regrese aquí y presione «Hablar»."
+  },
+  "voiceErrNoDevice": {
+    "message": "No encontré un micrófono. Revise que esté conectado e intente de nuevo."
+  },
+  "voiceErrMicBusy": {
+    "message": "No pude usar el micrófono. Quizás otra aplicación lo está usando. Ciérrela e intente de nuevo."
+  },
+  "voiceErrCapture": {
+    "message": "No pude grabar su voz. Intente de nuevo."
+  },
+  "micPermTitle": {
+    "message": "Permiso del micrófono"
+  },
+  "micPermIntro": {
+    "message": "Para escribir lo que usted diga, BABAS necesita usar el micrófono de su computadora. BABAS solo lo usa cuando usted presiona «Hablar»."
+  },
+  "micPermPrivacy": {
+    "message": "La grabación se envía al servicio de voz que eligió quien instaló BABAS, solo para convertir lo que usted diga en texto. BABAS no la guarda."
+  },
+  "micPermButton": {
+    "message": "Permitir el micrófono"
+  },
+  "micPermWaiting": {
+    "message": "El navegador le preguntará por el micrófono en una ventana cerca de la barra de direcciones. Elija permitirlo. Si le da varias opciones, elija una que no sea solo por esta vez."
+  },
+  "micPermDone": {
+    "message": "Listo. Ya puede cerrar esta pestaña y volver a BABAS."
+  },
+  "micPermDenied": {
+    "message": "No se dio el permiso. Para permitirlo, haga clic en el icono que está a la izquierda de la dirección de esta página (arriba), abra «Configuración del sitio» y cambie «Micrófono» a «Permitir». Después presione de nuevo el botón."
+  },
+  "micPermNoDevice": {
+    "message": "No encontré un micrófono. Revise que esté conectado e intente de nuevo."
+  },
+  "micPermBusy": {
+    "message": "No pude usar el micrófono. Quizás otra aplicación lo está usando. Ciérrela e intente de nuevo."
+  },
+  "micPermError": {
+    "message": "No pude usar el micrófono. Intente de nuevo."
+  }
+}

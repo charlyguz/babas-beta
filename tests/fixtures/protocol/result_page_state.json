@@ -1,0 +1,104 @@
+{
+  "v": 1,
+  "id": "11112222333344445555666677778888",
+  "type": "result",
+  "ok": true,
+  "payload": {
+    "snapshot_id": "k3j9x0qa",
+    "url": "http://127.0.0.1:8000/form.html",
+    "title": "Formulario de contacto",
+    "tab_id": 42,
+    "text": "Buscar Nombre Correo CURP Estado Enviar solicitud Mostrar mensaje",
+    "has_captcha": false,
+    "has_password": false,
+    "truncated": false,
+    "elements": [
+      {
+        "index": 0,
+        "tag": "input",
+        "role": "searchbox",
+        "label": "Buscar",
+        "text": "",
+        "type": "search",
+        "value": "",
+        "flags": [
+          "search_form"
+        ],
+        "in_viewport": true
+      },
+      {
+        "index": 1,
+        "tag": "button",
+        "role": "button",
+        "label": "Buscar",
+        "text": "",
+        "flags": [
+          "submit",
+          "search_form"
+        ],
+        "in_viewport": true
+      },
+      {
+        "index": 2,
+        "tag": "input",
+        "role": "textbox",
+        "label": "Correo",
+        "text": "",
+        "type": "email",
+        "value": "",
+        "flags": [
+          "pii"
+        ],
+        "in_viewport": true
+      },
+      {
+        "index": 3,
+        "tag": "select",
+        "role": "combobox",
+        "label": "Estado",
+        "text": "",
+        "value": "Aguascalientes",
+        "options": [
+          "Aguascalientes",
+          "Jalisco",
+          "Yucatán"
+        ],
+        "flags": [],
+        "in_viewport": true
+      },
+      {
+        "index": 4,
+        "tag": "input",
+        "role": "checkbox",
+        "label": "Acepto",
+        "text": "",
+        "type": "checkbox",
+        "checked": false,
+        "flags": [],
+        "in_viewport": true
+      },
+      {
+        "index": 5,
+        "tag": "a",
+        "role": "link",
+        "label": "Ayuda",
+        "text": "",
+        "href": "#ayuda",
+        "flags": [],
+        "in_viewport": true
+      },
+      {
+        "index": 6,
+        "tag": "button",
+        "role": "button",
+        "label": "Enviar solicitud",
+        "text": "",
+        "flags": [
+          "submit",
+          "consequential"
+        ],
+        "in_viewport": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Componente con sombra</title>
+</head>
+<body>
+<h1>Componente con sombra</h1>
+<mi-panel></mi-panel>
+<p id="out"></p>
+
+<script>
+  class MiPanel extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      var root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<button type="button">Botón sombra</button>';
+      root.querySelector('button').addEventListener('click', function () {
+        document.getElementById('out').textContent = 'sombra ok';
+      });
+    }
+  }
+  customElements.define('mi-panel', MiPanel);
+</script>
+</body>
+</html>
